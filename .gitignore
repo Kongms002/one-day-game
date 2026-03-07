@@ -1,0 +1,36 @@
+# Unity generated
+**/[Ll]ibrary/
+**/[Tt]emp/
+**/[Ll]ogs/
+**/[Oo]bj/
+**/[Bb]uild/
+**/[Bb]uilds/
+**/[Uu]ser[Ss]ettings/
+**/[Mm]emoryCaptures/
+
+# Unity cache/auto files
+**/Assets/AssetStoreTools*
+**/Assets/AddressableAssetsData/*/*.bin*
+**/Assets/StreamingAssets/aa.meta
+**/Assets/StreamingAssets/aa/
+
+# IDE
+.idea/
+.vscode/
+*.csproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# OS
+.DS_Store
+Thumbs.db
