@@ -10,6 +10,7 @@ using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+using TMPro;
 
 public static class GameStartSceneAutoSetup
 {
@@ -24,6 +25,7 @@ public static class GameStartSceneAutoSetup
         }
 
         RemoveMissingScripts(scene);
+        EnsureTmpFontAssets();
 
         var canvas = EnsureCanvas();
         EnsureEventSystem();
@@ -36,6 +38,28 @@ public static class GameStartSceneAutoSetup
         Selection.activeObject = bootstrap.gameObject;
         EditorSceneManager.MarkSceneDirty(scene);
         Debug.Log("[OneDayGame] Active scene setup completed. Review Inspector references and press Play.");
+    }
+
+    private static void EnsureTmpFontAssets()
+    {
+        var defaultFont = TMP_Settings.defaultFontAsset;
+        if (defaultFont == null)
+        {
+            return;
+        }
+
+        var tmpTexts = Object.FindObjectsByType<TMP_Text>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < tmpTexts.Length; i++)
+        {
+            var text = tmpTexts[i];
+            if (text == null || text.font != null)
+            {
+                continue;
+            }
+
+            text.font = defaultFont;
+            EditorUtility.SetDirty(text);
+        }
     }
 
     private static void DisableLegacyFlowComponents()
@@ -60,6 +84,12 @@ public static class GameStartSceneAutoSetup
         var existing = Object.FindFirstObjectByType<Canvas>();
         if (existing != null)
         {
+            var existingRect = existing.GetComponent<RectTransform>();
+            if (existingRect != null)
+            {
+                existingRect.localScale = Vector3.one;
+            }
+
             return existing;
         }
 
@@ -69,6 +99,7 @@ public static class GameStartSceneAutoSetup
         var scaler = go.GetComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920f, 1080f);
+        go.GetComponent<RectTransform>().localScale = Vector3.one;
         return canvas;
     }
 
@@ -99,21 +130,22 @@ public static class GameStartSceneAutoSetup
         var runtimeInputGO = FindOrCreateRoot("RuntimeInput");
         var runtimeInput = GetOrAdd<RuntimeInputPort>(runtimeInputGO);
 
-        var joystick = CreateJoystick(canvasTransform);
+        var joystick = EnsureRuntimeJoystick(canvasTransform);
 
         var buttons = Object.FindObjectsByType<UltimatePressButton>(FindObjectsInactive.Include, FindObjectsSortMode.None);
         var ultimateButton = FindByName(buttons, "UltimateButton");
-        if (ultimateButton != null)
+        if (ultimateButton == null)
         {
-            ultimateButton.gameObject.SetActive(false);
+            ultimateButton = CreateActionButton(canvasTransform, "UltimateButton", new Vector2(-140f, 140f));
         }
+        ultimateButton.gameObject.SetActive(false);
 
         var actionAsset = LoadInputActions();
         var serialized = new SerializedObject(runtimeInput);
         serialized.FindProperty("_actionAsset").objectReferenceValue = actionAsset;
         serialized.FindProperty("_actionMapName").stringValue = "Player";
         serialized.FindProperty("_moveActionName").stringValue = "Move";
-        serialized.FindProperty("_ultimateActionName").stringValue = string.Empty;
+        serialized.FindProperty("_ultimateActionName").stringValue = "Interact";
         serialized.FindProperty("_joystick").objectReferenceValue = joystick;
         serialized.FindProperty("_ultimateButton").objectReferenceValue = ultimateButton;
         serialized.FindProperty("_useUltimateInput").boolValue = false;
@@ -312,10 +344,248 @@ public static class GameStartSceneAutoSetup
         serialized.FindProperty("_enemyHitFrameDuration").floatValue = 0.08f;
         serialized.FindProperty("_enemyDeathFrameDuration").floatValue = 0.35f;
         serialized.FindProperty("_showEnemyHpBarsInDev").boolValue = true;
-        serialized.FindProperty("_enableUltimate").boolValue = false;
+        serialized.FindProperty("_enableUltimate").boolValue = true;
         serialized.ApplyModifiedPropertiesWithoutUndo();
 
         return bootstrap;
+    }
+
+    private static FloatingJoystick EnsureRuntimeJoystick(Transform canvasTransform)
+    {
+        var existing = FindFloatingJoystickUnderCanvas(canvasTransform);
+        if (existing != null)
+        {
+            ApplyEditorJoystickDefaults(existing);
+            return existing;
+        }
+
+        return CreateJoystick(canvasTransform);
+    }
+
+    private static bool IsUnderTransform(Transform candidate, Transform parent)
+    {
+        if (candidate == null || parent == null)
+        {
+            return false;
+        }
+
+        var current = candidate;
+        while (current != null)
+        {
+            if (current == parent)
+            {
+                return true;
+            }
+
+            current = current.parent;
+        }
+
+        return false;
+    }
+
+    private static FloatingJoystick FindFloatingJoystickUnderCanvas(Transform canvasTransform)
+    {
+        if (canvasTransform == null)
+        {
+            return null;
+        }
+
+        var joysticks = Object.FindObjectsByType<FloatingJoystick>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < joysticks.Length; i++)
+        {
+            var joystick = joysticks[i];
+            if (joystick == null || joystick.gameObject == null)
+            {
+                continue;
+            }
+
+            if (!IsUnderTransform(joystick.transform, canvasTransform))
+            {
+                continue;
+            }
+
+            return joystick;
+        }
+
+        return null;
+    }
+
+    private static void ApplyEditorJoystickDefaults(FloatingJoystick joystick)
+    {
+        if (joystick == null)
+        {
+            return;
+        }
+
+        joystick.enabled = true;
+        if (joystick.gameObject != null && !joystick.gameObject.activeSelf)
+        {
+            joystick.gameObject.SetActive(true);
+        }
+
+        var touchRect = joystick.GetComponent<RectTransform>();
+        if (touchRect != null)
+        {
+            var touchArea = touchRect.GetComponent<Image>();
+            if (touchArea == null)
+            {
+                touchArea = touchRect.gameObject.AddComponent<Image>();
+            }
+
+            touchArea.color = new Color(0f, 0f, 0f, 0.001f);
+            touchArea.raycastTarget = true;
+            if (touchRect.localScale.x == 0f || touchRect.localScale.y == 0f || touchRect.localScale.z == 0f)
+            {
+                touchRect.localScale = Vector3.one;
+            }
+        }
+
+        var serialized = new SerializedObject(joystick);
+        serialized.Update();
+        var floatingMode = serialized.FindProperty("_floatingMode");
+        if (floatingMode != null)
+        {
+            floatingMode.boolValue = true;
+        }
+
+        var background = serialized.FindProperty("_background");
+        var handle = serialized.FindProperty("_handle");
+        var backgroundRect = background != null
+            ? background.objectReferenceValue as RectTransform
+            : null;
+        var handleRect = handle != null
+            ? handle.objectReferenceValue as RectTransform
+            : null;
+
+        NormalizeEditorJoystickHierarchy(touchRect, ref backgroundRect, ref handleRect);
+
+        if (handle != null)
+        {
+            handle.objectReferenceValue = handleRect;
+        }
+
+        if (background != null)
+        {
+            background.objectReferenceValue = backgroundRect;
+        }
+
+        if (backgroundRect != null)
+        {
+            var bgImage = backgroundRect.GetComponent<Image>();
+            if (bgImage != null)
+            {
+                bgImage.sprite = RuntimeSpriteLibrary.GetCircle();
+                bgImage.preserveAspect = true;
+                bgImage.color = new Color(1f, 1f, 1f, 0.25f);
+                bgImage.raycastTarget = false;
+            }
+        }
+
+        if (handleRect != null)
+        {
+            var handleImage = handleRect.GetComponent<Image>();
+            if (handleImage != null)
+            {
+                handleImage.sprite = RuntimeSpriteLibrary.GetCircle();
+                handleImage.preserveAspect = true;
+                handleImage.color = new Color(1f, 1f, 1f, 0.65f);
+                handleImage.raycastTarget = false;
+            }
+        }
+
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+
+        if (backgroundRect != null && handleRect != null)
+        {
+            joystick.Configure(backgroundRect, handleRect, true);
+        }
+    }
+
+    private static void NormalizeEditorJoystickHierarchy(
+        RectTransform touchRect,
+        ref RectTransform backgroundRect,
+        ref RectTransform handleRect)
+    {
+        if (touchRect == null)
+        {
+            return;
+        }
+
+        if (backgroundRect == null)
+        {
+            backgroundRect = touchRect.Find("Background") as RectTransform;
+        }
+
+        if (backgroundRect == null)
+        {
+            return;
+        }
+
+        var selectedHandle = handleRect;
+
+        if (selectedHandle == null)
+        {
+            selectedHandle = touchRect.Find("Handle") as RectTransform;
+            if (selectedHandle != null)
+            {
+                selectedHandle.SetParent(touchRect, false);
+            }
+        }
+
+        for (int i = backgroundRect.childCount - 1; i >= 0; i--)
+        {
+            var child = backgroundRect.GetChild(i) as RectTransform;
+            if (child == null || child.name != "Handle")
+            {
+                continue;
+            }
+
+            if (selectedHandle == null)
+            {
+                selectedHandle = child;
+            }
+
+            if (child != selectedHandle)
+            {
+                Object.DestroyImmediate(child.gameObject);
+                continue;
+            }
+
+            child.SetParent(touchRect, false);
+        }
+
+        if (selectedHandle == null)
+        {
+            var fallbackHandle = FindOrCreateChild(touchRect, "Handle");
+            selectedHandle = GetOrAdd<RectTransform>(fallbackHandle);
+            if (selectedHandle != null)
+            {
+                selectedHandle.anchorMin = new Vector2(0.5f, 0.5f);
+                selectedHandle.anchorMax = new Vector2(0.5f, 0.5f);
+                selectedHandle.pivot = new Vector2(0.5f, 0.5f);
+                selectedHandle.anchoredPosition = Vector2.zero;
+                selectedHandle.sizeDelta = new Vector2(90f, 90f);
+            }
+        }
+
+        if (selectedHandle != null)
+        {
+            selectedHandle.SetParent(touchRect, false);
+        }
+
+        var rootHandle = touchRect.Find("Handle") as RectTransform;
+        for (int i = touchRect.childCount - 1; i >= 0; i--)
+        {
+            var child = touchRect.GetChild(i) as RectTransform;
+            if (child == null || child.name != "Handle" || child == rootHandle)
+            {
+                continue;
+            }
+
+            Object.DestroyImmediate(child.gameObject);
+        }
+
+        handleRect = touchRect.Find("Handle") as RectTransform;
     }
 
     private static FloatingJoystick CreateJoystick(Transform canvasTransform)
@@ -345,7 +615,7 @@ public static class GameStartSceneAutoSetup
         bgImage.color = new Color(1f, 1f, 1f, 0.25f);
         bgImage.raycastTarget = false;
 
-        var handleGO = FindOrCreateChild(bgRect, "Handle");
+        var handleGO = FindOrCreateChild(joystickRect, "Handle");
         var handleRect = GetOrAdd<RectTransform>(handleGO);
         handleRect.anchorMin = new Vector2(0.5f, 0.5f);
         handleRect.anchorMax = new Vector2(0.5f, 0.5f);
