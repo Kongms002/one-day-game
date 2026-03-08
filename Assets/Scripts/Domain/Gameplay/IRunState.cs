@@ -6,6 +6,7 @@ namespace OneDayGame.Domain.Gameplay
     public interface IRunState
     {
         int Score { get; }
+        int EnemiesSpawned { get; }
 
         int Stage { get; }
 
@@ -14,6 +15,14 @@ namespace OneDayGame.Domain.Gameplay
         float MaxHp { get; }
 
         float Ultimate { get; }
+
+        int Experience { get; }
+
+        int Level { get; }
+
+        int ExpInLevel { get; }
+
+        int ExpToNextLevel { get; }
 
         float ElapsedTime { get; }
 
@@ -32,5 +41,7 @@ namespace OneDayGame.Domain.Gameplay
         event Action<RunSnapshot> Restarted;
 
         event Action<bool> DeadStateChanged;
+
+        event Action<int> LevelUpTriggered;
     }
 }

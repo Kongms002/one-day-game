@@ -13,11 +13,16 @@ namespace OneDayGame.Application
         private readonly IDifficultyPolicy _difficultyPolicy;
 
         private int _score;
+        private int _enemiesSpawned;
         private int _stage;
         private int _killsInStage;
         private float _hp;
         private float _maxHp;
         private float _ultimate;
+        private int _experience;
+        private int _level;
+        private int _expInLevel;
+        private int _expToNextLevel;
         private float _elapsed;
         private bool _isDead;
         private bool _hasStarted;
@@ -26,6 +31,7 @@ namespace OneDayGame.Application
         public event Action<RunSnapshot> RunEnded;
         public event Action<RunSnapshot> Restarted;
         public event Action<bool> DeadStateChanged;
+        public event Action<int> LevelUpTriggered;
 
         public RunSessionService(RunConfig config, IDifficultyPolicy difficultyPolicy, IRunRepository repository)
         {
@@ -39,6 +45,8 @@ namespace OneDayGame.Application
 
         public int Score => _score;
 
+        public int EnemiesSpawned => _enemiesSpawned;
+
         public int Stage => _stage;
 
         public float Hp => _hp;
@@ -46,6 +54,14 @@ namespace OneDayGame.Application
         public float MaxHp => _maxHp;
 
         public float Ultimate => _ultimate;
+
+        public int Experience => _experience;
+
+        public int Level => _level;
+
+        public int ExpInLevel => _expInLevel;
+
+        public int ExpToNextLevel => _expToNextLevel;
 
         public float ElapsedTime => _elapsed;
 
@@ -55,7 +71,18 @@ namespace OneDayGame.Application
 
         public int KillsInCurrentStage => _killsInStage;
 
-        public RunSnapshot Snapshot => new RunSnapshot(_score, _stage, _hp, _maxHp, _ultimate, _elapsed);
+        public RunSnapshot Snapshot => new RunSnapshot(
+            _score,
+            _enemiesSpawned,
+            _stage,
+            _hp,
+            _maxHp,
+            _ultimate,
+            _experience,
+            _level,
+            _expInLevel,
+            _expToNextLevel,
+            _elapsed);
 
         public void StartRun()
         {
@@ -134,6 +161,17 @@ namespace OneDayGame.Application
             SnapshotChanged?.Invoke(Snapshot);
         }
 
+        public void RegisterEnemySpawn()
+        {
+            if (_isDead)
+            {
+                return;
+            }
+
+            _enemiesSpawned++;
+            SnapshotChanged?.Invoke(Snapshot);
+        }
+
         public void RegisterHeal(float healAmount)
         {
             if (_isDead)
@@ -147,6 +185,38 @@ namespace OneDayGame.Application
             }
 
             _hp = Math.Min(_maxHp, _hp + healAmount);
+            SnapshotChanged?.Invoke(Snapshot);
+        }
+
+        public void RegisterExperience(int amount)
+        {
+            if (_isDead || amount <= 0)
+            {
+                return;
+            }
+
+            _experience += amount;
+            _expInLevel += amount;
+            while (_expInLevel >= _expToNextLevel)
+            {
+                _expInLevel -= _expToNextLevel;
+                _level++;
+                _expToNextLevel = Math.Min(999999, (int) Math.Ceiling(_expToNextLevel * 1.35f));
+                LevelUpTriggered?.Invoke(_level);
+            }
+
+            SnapshotChanged?.Invoke(Snapshot);
+        }
+
+        public void ApplyMaxHpUpgrade(float amount)
+        {
+            if (_isDead || amount <= 0f)
+            {
+                return;
+            }
+
+            _maxHp += amount;
+            _hp = Math.Min(_maxHp, _hp + amount);
             SnapshotChanged?.Invoke(Snapshot);
         }
 
@@ -183,11 +253,16 @@ namespace OneDayGame.Application
         private void ResetInternal(bool firstBoot)
         {
             _score = 0;
+            _enemiesSpawned = 0;
             _stage = _config.InitialStage;
             _killsInStage = 0;
             _maxHp = _config.StartMaxHp;
             _hp = _maxHp;
             _ultimate = _config.UltimateStart;
+            _experience = 0;
+            _level = 1;
+            _expInLevel = 0;
+            _expToNextLevel = 20;
             _elapsed = 0f;
             _isDead = false;
             _hasStarted = firstBoot ? false : true;

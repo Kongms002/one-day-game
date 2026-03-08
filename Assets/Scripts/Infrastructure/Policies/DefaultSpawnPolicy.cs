@@ -1,20 +1,32 @@
 using OneDayGame.Domain.Gameplay;
 using OneDayGame.Domain.Policies;
 using OneDayGame.Domain.Randomness;
+using OneDayGame.Domain;
 using UnityEngine;
 
 namespace OneDayGame.Infrastructure.Policies
 {
     public sealed class DefaultSpawnPolicy : ISpawnPolicy
     {
-        private const float MaxInterval = 2.2f;
-        private const float MinInterval = 0.45f;
+        private readonly IStageProfileProvider _stageProfileProvider;
+
+        public DefaultSpawnPolicy()
+            : this((IStageProfileProvider) null)
+        {
+        }
+
+        public DefaultSpawnPolicy(IStageProfileProvider stageProfileProvider)
+        {
+            _stageProfileProvider = stageProfileProvider ?? new DefaultStageProfileProvider();
+        }
 
         public float GetSpawnInterval(int stage, int activeEnemyCount)
         {
-            float interval = 1.6f - (Mathf.Min(stage - 1, 8) * 0.12f);
-            interval -= activeEnemyCount * 0.08f;
-            return Mathf.Max(MinInterval, Mathf.Min(MaxInterval, interval));
+            var profile = ResolveProfile(stage);
+            float relativeStage = Mathf.Max(1, stage) - 1;
+            float interval = profile.SpawnIntervalBase - relativeStage * profile.SpawnIntervalPerStage;
+            interval -= activeEnemyCount * profile.SpawnIntervalPerActiveEnemy;
+            return Mathf.Max(profile.SpawnIntervalMin, Mathf.Min(profile.SpawnIntervalMax, interval));
         }
 
         public SpawnRequest CreateEnemyRequest(int stage, IRandomService randomService, IMapPolicy mapPolicy, EnemyData enemyData)
@@ -22,6 +34,11 @@ namespace OneDayGame.Infrastructure.Policies
             float x = randomService.Range(mapPolicy.SpawnXMin, mapPolicy.SpawnXMax);
             float y = randomService.Range(mapPolicy.SpawnYMin, mapPolicy.SpawnYMax);
             return SpawnRequest.Enemy(x, y, enemyData);
+        }
+
+        private StageProfile ResolveProfile(int stage)
+        {
+            return _stageProfileProvider.ResolveProfile(Mathf.Max(1, stage));
         }
     }
 }

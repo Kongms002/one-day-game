@@ -1,5 +1,5 @@
 using UnityEngine;
-using UnityEngine.InputSystem;
+using OneDayGame.Presentation.Bootstrap;
 
 public class GameManager : MonoBehaviour
 {
@@ -12,39 +12,41 @@ public class GameManager : MonoBehaviour
 
     void Start()
     {
-        Title.SetActive(true);
-        tapToStartUI.SetActive(true);
-        joystickInput.SetActive(false);
-        //enemySpawner.SetActive(false);
+        EnsureRuntimeBootstrap();
+        StartGame();
     }
 
-    void Update()
+    void EnsureRuntimeBootstrap()
     {
-        if (gameStarted)
+        if (FindObjectOfType<GameBootstrap>() != null)
+        {
             return;
-
-        // 터치
-        if (Touchscreen.current != null)
-        {
-            if (Touchscreen.current.primaryTouch.press.wasPressedThisFrame)
-            {
-                StartGame();
-            }
         }
-        // 마우스 (에디터 테스트)
-        else if (Mouse.current.leftButton.wasPressedThisFrame)
+
+        var bootstrapRoot = new GameObject("GameBootstrap");
+        bootstrapRoot.AddComponent<GameBootstrap>();
+
+        var legacyPlayer = FindObjectOfType<PlayerController>();
+        if (legacyPlayer != null)
         {
-            StartGame();
+            legacyPlayer.gameObject.SetActive(false);
         }
     }
 
     void StartGame()
     {
+        if (gameStarted)
+            return;
+
         gameStarted = true;
 
-        tapToStartUI.SetActive(false);
-        joystickInput.SetActive(true);
-        Title.SetActive(false);
-        //enemySpawner.SetActive(true);
+        if (tapToStartUI != null)
+            tapToStartUI.SetActive(false);
+
+        if (joystickInput != null)
+            joystickInput.SetActive(true);
+
+        if (Title != null)
+            Title.SetActive(false);
     }
 }
