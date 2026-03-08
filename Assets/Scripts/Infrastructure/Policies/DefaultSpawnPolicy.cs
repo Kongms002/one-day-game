@@ -8,6 +8,8 @@ namespace OneDayGame.Infrastructure.Policies
 {
     public sealed class DefaultSpawnPolicy : ISpawnPolicy
     {
+        private const float SpawnIntervalTuning = 0.78f;
+
         private readonly IStageProfileProvider _stageProfileProvider;
 
         public DefaultSpawnPolicy()
@@ -26,6 +28,7 @@ namespace OneDayGame.Infrastructure.Policies
             float relativeStage = Mathf.Max(1, stage) - 1;
             float interval = profile.SpawnIntervalBase - relativeStage * profile.SpawnIntervalPerStage;
             interval -= activeEnemyCount * profile.SpawnIntervalPerActiveEnemy;
+            interval *= SpawnIntervalTuning;
             return Mathf.Max(profile.SpawnIntervalMin, Mathf.Min(profile.SpawnIntervalMax, interval));
         }
 

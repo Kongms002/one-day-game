@@ -26,5 +26,20 @@ namespace OneDayGame.Infrastructure.Policies
         {
             return 5;
         }
+
+        public float GetMagnetSpawnChance(int stage)
+        {
+            return Mathf.Min(0.32f, 0.06f + stage * 0.018f);
+        }
+
+        public float GetMagnetDuration(int stage)
+        {
+            return 4.5f + Mathf.Min(4f, stage * 0.18f);
+        }
+
+        public float GetMagnetRadius(int stage)
+        {
+            return 2.6f + Mathf.Min(3f, stage * 0.15f);
+        }
     }
 }

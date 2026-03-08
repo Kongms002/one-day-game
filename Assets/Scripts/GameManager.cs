@@ -6,40 +6,40 @@ public class GameManager : MonoBehaviour
     public GameObject Title;
     public GameObject tapToStartUI;
     public GameObject joystickInput;
-    //public GameObject enemySpawner;
-
-    private bool gameStarted = false;
 
     void Start()
     {
+        DisableLegacyPlayerControllers();
         EnsureRuntimeBootstrap();
-        StartGame();
+        HideLegacyStartUi();
+    }
+
+    private void DisableLegacyPlayerControllers()
+    {
+        var legacyPlayers = Object.FindObjectsByType<PlayerController>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < legacyPlayers.Length; i++)
+        {
+            var legacyPlayer = legacyPlayers[i];
+            if (legacyPlayer != null)
+            {
+                legacyPlayer.enabled = false;
+            }
+        }
     }
 
     void EnsureRuntimeBootstrap()
     {
-        if (FindObjectOfType<GameBootstrap>() != null)
+        if (Object.FindFirstObjectByType<GameBootstrap>() != null)
         {
             return;
         }
 
         var bootstrapRoot = new GameObject("GameBootstrap");
         bootstrapRoot.AddComponent<GameBootstrap>();
-
-        var legacyPlayer = FindObjectOfType<PlayerController>();
-        if (legacyPlayer != null)
-        {
-            legacyPlayer.gameObject.SetActive(false);
-        }
     }
 
-    void StartGame()
+    void HideLegacyStartUi()
     {
-        if (gameStarted)
-            return;
-
-        gameStarted = true;
-
         if (tapToStartUI != null)
             tapToStartUI.SetActive(false);
 
@@ -48,5 +48,17 @@ public class GameManager : MonoBehaviour
 
         if (Title != null)
             Title.SetActive(false);
+
+        var byNameTap = GameObject.Find("TapToStart");
+        if (byNameTap != null)
+        {
+            byNameTap.SetActive(false);
+        }
+
+        var byNameTitle = GameObject.Find("Title");
+        if (byNameTitle != null)
+        {
+            byNameTitle.SetActive(false);
+        }
     }
 }

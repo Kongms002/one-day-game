@@ -26,6 +26,8 @@ namespace OneDayGame.Application
         private float _elapsed;
         private bool _isDead;
         private bool _hasStarted;
+        private int _totalKills;
+        private float _totalDamageTaken;
 
         public event Action<RunSnapshot> SnapshotChanged;
         public event Action<RunSnapshot> RunEnded;
@@ -71,6 +73,10 @@ namespace OneDayGame.Application
 
         public int KillsInCurrentStage => _killsInStage;
 
+        public int TotalKills => _totalKills;
+
+        public float TotalDamageTaken => _totalDamageTaken;
+
         public RunSnapshot Snapshot => new RunSnapshot(
             _score,
             _enemiesSpawned,
@@ -110,6 +116,7 @@ namespace OneDayGame.Application
             }
 
             _hp = Math.Max(0f, _hp - damage);
+            _totalDamageTaken += Math.Max(0f, damage);
 
             if (_hp <= 0f)
             {
@@ -145,6 +152,7 @@ namespace OneDayGame.Application
 
             _score += Math.Max(0, reward);
             _killsInStage++;
+            _totalKills++;
 
             if (_killsInStage >= GetStageGoal(_stage))
             {
@@ -266,6 +274,8 @@ namespace OneDayGame.Application
             _elapsed = 0f;
             _isDead = false;
             _hasStarted = firstBoot ? false : true;
+            _totalKills = 0;
+            _totalDamageTaken = 0f;
 
             if (firstBoot)
             {
