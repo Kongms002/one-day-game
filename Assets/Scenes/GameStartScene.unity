@@ -1010,7 +1010,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: 'Tap to Start
+  m_text: 'TAP TO START
 
 '
   m_isRightToLeft: 0
@@ -2477,11 +2477,11 @@ MonoBehaviour:
   _actionAsset: {fileID: -944628639613478452, guid: 2bcd2660ca9b64942af0de543d8d7100, type: 3}
   _actionMapName: Player
   _moveActionName: Move
-  _ultimateActionName: 
+  _ultimateActionName: Interact
   _joystick: {fileID: 0}
   _legacyJoystick: {fileID: 549836757}
   _ultimateButton: {fileID: 0}
-  _useUltimateInput: 0
+  _useUltimateInput: 1
 --- !u!4 &1223134114
 Transform:
   m_ObjectHideFlags: 0
@@ -3971,7 +3971,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Title
+  m_text: Adventurous
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -4875,7 +4875,7 @@ MonoBehaviour:
     PlayerClampSpeed: 11
     EnemyBoundaryPadding: 0.5
   _stageProfileConfig: {fileID: 0}
-  _enableUltimate: 0
+  _enableUltimate: 1
   _autoRestartDelay: 0
   _showEnemyHpBarsInDev: 1
 --- !u!4 &2115679547

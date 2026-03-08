@@ -230,9 +230,9 @@ namespace OneDayGame.Domain.Gameplay
 
         public string WeaponDescription = "Orbiting blade that slices nearby enemies. Ultimate overload wipes a large radius.";
 
-        public float WeaponDamage = 20f;
+        public float WeaponDamage = 8.5f;
 
-        public float WeaponDamagePerStage = 1.5f;
+        public float WeaponDamagePerStage = 0.6f;
 
         public float WeaponAttackRange = 0.85f;
 

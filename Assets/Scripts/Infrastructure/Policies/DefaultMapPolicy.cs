@@ -59,6 +59,40 @@ namespace OneDayGame.Infrastructure.Policies
             _playerMaxX = profile.PlayerMaxX;
             _playerMinY = profile.PlayerMinY;
             _playerMaxY = profile.PlayerMaxY;
+
+            if (_spawnXMin > _spawnXMax)
+            {
+                (_spawnXMin, _spawnXMax) = (_spawnXMax, _spawnXMin);
+            }
+
+            if (_spawnYMin > _spawnYMax)
+            {
+                (_spawnYMin, _spawnYMax) = (_spawnYMax, _spawnYMin);
+            }
+
+            if (_playerMinX > _playerMaxX)
+            {
+                (_playerMinX, _playerMaxX) = (_playerMaxX, _playerMinX);
+            }
+
+            if (_playerMinY > _playerMaxY)
+            {
+                (_playerMinY, _playerMaxY) = (_playerMaxY, _playerMinY);
+            }
+
+            if (_playerMaxX - _playerMinX < 0.5f)
+            {
+                float centerX = (_playerMinX + _playerMaxX) * 0.5f;
+                _playerMinX = centerX - 0.25f;
+                _playerMaxX = centerX + 0.25f;
+            }
+
+            if (_playerMaxY - _playerMinY < 0.5f)
+            {
+                float centerY = (_playerMinY + _playerMaxY) * 0.5f;
+                _playerMinY = centerY - 0.25f;
+                _playerMaxY = centerY + 0.25f;
+            }
         }
     }
 }
