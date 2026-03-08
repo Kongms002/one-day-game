@@ -7,6 +7,8 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.UI;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 public static class GameStartSceneAutoSetup
@@ -20,6 +22,8 @@ public static class GameStartSceneAutoSetup
             Debug.LogError("No active loaded scene. Open a scene first.");
             return;
         }
+
+        RemoveMissingScripts(scene);
 
         var canvas = EnsureCanvas();
         EnsureEventSystem();
@@ -46,8 +50,8 @@ public static class GameStartSceneAutoSetup
         var oldPlayerController = FindFirstByType<global::PlayerController>();
         if (oldPlayerController != null)
         {
-            oldPlayerController.enabled = false;
-            EditorUtility.SetDirty(oldPlayerController);
+            oldPlayerController.gameObject.SetActive(false);
+            EditorUtility.SetDirty(oldPlayerController.gameObject);
         }
     }
 
@@ -70,12 +74,24 @@ public static class GameStartSceneAutoSetup
 
     private static void EnsureEventSystem()
     {
-        if (Object.FindFirstObjectByType<EventSystem>() != null)
+        var existing = Object.FindFirstObjectByType<EventSystem>();
+        if (existing != null)
         {
+            if (existing.GetComponent<InputSystemUIInputModule>() == null)
+            {
+                existing.gameObject.AddComponent<InputSystemUIInputModule>();
+            }
+
+            var oldModule = existing.GetComponent<StandaloneInputModule>();
+            if (oldModule != null)
+            {
+                Object.DestroyImmediate(oldModule);
+            }
+
             return;
         }
 
-        new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
+        new GameObject("EventSystem", typeof(EventSystem), typeof(InputSystemUIInputModule));
     }
 
     private static RuntimeInputPort EnsureRuntimeInput(Transform canvasTransform)
@@ -83,12 +99,7 @@ public static class GameStartSceneAutoSetup
         var runtimeInputGO = FindOrCreateRoot("RuntimeInput");
         var runtimeInput = GetOrAdd<RuntimeInputPort>(runtimeInputGO);
 
-        var joystick = FindFirstByType<FloatingJoystick>();
-        var legacyJoystick = FindFirstByType<global::FloatingJoystick>();
-        if (joystick == null && legacyJoystick == null)
-        {
-            joystick = CreateJoystick(canvasTransform);
-        }
+        var joystick = CreateJoystick(canvasTransform);
 
         var buttons = Object.FindObjectsByType<UltimatePressButton>(FindObjectsInactive.Include, FindObjectsSortMode.None);
         var ultimateButton = FindByName(buttons, "UltimateButton");
@@ -104,12 +115,34 @@ public static class GameStartSceneAutoSetup
         serialized.FindProperty("_moveActionName").stringValue = "Move";
         serialized.FindProperty("_ultimateActionName").stringValue = string.Empty;
         serialized.FindProperty("_joystick").objectReferenceValue = joystick;
-        serialized.FindProperty("_legacyJoystick").objectReferenceValue = legacyJoystick;
         serialized.FindProperty("_ultimateButton").objectReferenceValue = ultimateButton;
         serialized.FindProperty("_useUltimateInput").boolValue = false;
         serialized.ApplyModifiedPropertiesWithoutUndo();
 
         return runtimeInput;
+    }
+
+    private static void RemoveMissingScripts(Scene scene)
+    {
+        var roots = scene.GetRootGameObjects();
+        for (int i = 0; i < roots.Length; i++)
+        {
+            RemoveMissingScriptsRecursive(roots[i].transform);
+        }
+    }
+
+    private static void RemoveMissingScriptsRecursive(Transform transform)
+    {
+        if (transform == null)
+        {
+            return;
+        }
+
+        GameObjectUtility.RemoveMonoBehavioursWithMissingScript(transform.gameObject);
+        for (int i = 0; i < transform.childCount; i++)
+        {
+            RemoveMissingScriptsRecursive(transform.GetChild(i));
+        }
     }
 
     private static GameHudPresenter EnsureHud(Transform canvasTransform)
@@ -191,6 +224,20 @@ public static class GameStartSceneAutoSetup
         var upgradeC = EnsurePanelButton(levelUpPanel.transform, "UpgradeC", new Vector2(28f, -274f), new Vector2(504f, 78f), "Max HP +20");
         levelUpPanel.SetActive(false);
 
+        var resultPanel = EnsureHudPanel(hudRootGO.transform, "ResultPanel", Vector2.zero, new Vector2(520f, 320f), new Color(0.05f, 0.05f, 0.07f, 0.94f));
+        var resultRect = resultPanel.GetComponent<RectTransform>();
+        resultRect.anchorMin = new Vector2(0.5f, 0.5f);
+        resultRect.anchorMax = new Vector2(0.5f, 0.5f);
+        resultRect.pivot = new Vector2(0.5f, 0.5f);
+        resultRect.anchoredPosition = Vector2.zero;
+        var resultTitle = EnsurePanelText(resultPanel.transform, "ResultTitle", new Vector2(24f, -24f), 30, TextAnchor.UpperLeft);
+        resultTitle.text = "Run Result";
+        var resultDamage = EnsurePanelText(resultPanel.transform, "ResultDamage", new Vector2(24f, -88f), 24, TextAnchor.UpperLeft);
+        var resultTime = EnsurePanelText(resultPanel.transform, "ResultTime", new Vector2(24f, -132f), 24, TextAnchor.UpperLeft);
+        var resultKills = EnsurePanelText(resultPanel.transform, "ResultKills", new Vector2(24f, -176f), 24, TextAnchor.UpperLeft);
+        var restartButton = EnsurePanelButton(resultPanel.transform, "RestartButton", new Vector2(170f, -246f), new Vector2(180f, 52f), "Restart");
+        resultPanel.SetActive(false);
+
         var serialized = new SerializedObject(hud);
         serialized.FindProperty("_scoreText").objectReferenceValue = scoreText;
         serialized.FindProperty("_stageText").objectReferenceValue = stageText;
@@ -219,6 +266,11 @@ public static class GameStartSceneAutoSetup
         serialized.FindProperty("_upgradeButtonAText").objectReferenceValue = upgradeA.transform.Find("Text").GetComponent<Text>();
         serialized.FindProperty("_upgradeButtonBText").objectReferenceValue = upgradeB.transform.Find("Text").GetComponent<Text>();
         serialized.FindProperty("_upgradeButtonCText").objectReferenceValue = upgradeC.transform.Find("Text").GetComponent<Text>();
+        serialized.FindProperty("_resultPanel").objectReferenceValue = resultPanel;
+        serialized.FindProperty("_resultDamageText").objectReferenceValue = resultDamage;
+        serialized.FindProperty("_resultTimeText").objectReferenceValue = resultTime;
+        serialized.FindProperty("_resultKillsText").objectReferenceValue = resultKills;
+        serialized.FindProperty("_restartButton").objectReferenceValue = restartButton.GetComponent<Button>();
         serialized.ApplyModifiedPropertiesWithoutUndo();
 
         return hud;
@@ -238,6 +290,7 @@ public static class GameStartSceneAutoSetup
         var enemyPrefab = LoadAsset<EnemyView>("Assets/Prefabs/Enemy.prefab");
         var medKitPrefab = LoadAsset<MedKitView>("Assets/Prefabs/MedKit.prefab");
         var expOrbPrefab = LoadAsset<ExpOrbView>("Assets/Prefabs/ExpOrb.prefab");
+        var enemyStateSheet = LoadAsset<Texture2D>("Assets/Image/Enemy/enemy_1.png");
 
         var serialized = new SerializedObject(bootstrap);
         serialized.FindProperty("_inputPort").objectReferenceValue = runtimeInput;
@@ -250,6 +303,14 @@ public static class GameStartSceneAutoSetup
         serialized.FindProperty("_expOrbRoot").objectReferenceValue = expOrbRoot;
         serialized.FindProperty("_hudPresenter").objectReferenceValue = hud;
         serialized.FindProperty("_roundMapView").objectReferenceValue = roundMap;
+        serialized.FindProperty("_enemyStateSheet").objectReferenceValue = enemyStateSheet;
+        serialized.FindProperty("_enemyMoveFrameASprite").objectReferenceValue = null;
+        serialized.FindProperty("_enemyMoveFrameBSprite").objectReferenceValue = null;
+        serialized.FindProperty("_enemyHitFrameSprite").objectReferenceValue = null;
+        serialized.FindProperty("_enemyDeathFrameSprite").objectReferenceValue = null;
+        serialized.FindProperty("_enemyMoveFrameInterval").floatValue = 0.14f;
+        serialized.FindProperty("_enemyHitFrameDuration").floatValue = 0.08f;
+        serialized.FindProperty("_enemyDeathFrameDuration").floatValue = 0.35f;
         serialized.FindProperty("_showEnemyHpBarsInDev").boolValue = true;
         serialized.FindProperty("_enableUltimate").boolValue = false;
         serialized.ApplyModifiedPropertiesWithoutUndo();
@@ -261,15 +322,30 @@ public static class GameStartSceneAutoSetup
     {
         var joystickGO = FindOrCreateChild(canvasTransform, "JoyStick");
         var joystickRect = GetOrAdd<RectTransform>(joystickGO);
-        joystickRect.anchorMin = new Vector2(0f, 0f);
-        joystickRect.anchorMax = new Vector2(0f, 0f);
+        joystickRect.anchorMin = Vector2.zero;
+        joystickRect.anchorMax = Vector2.one;
         joystickRect.pivot = new Vector2(0.5f, 0.5f);
-        joystickRect.anchoredPosition = new Vector2(180f, 180f);
-        joystickRect.sizeDelta = new Vector2(200f, 200f);
-        var bgImage = GetOrAdd<Image>(joystickGO);
-        bgImage.color = new Color(1f, 1f, 1f, 0.25f);
+        joystickRect.offsetMin = Vector2.zero;
+        joystickRect.offsetMax = Vector2.zero;
 
-        var handleGO = FindOrCreateChild(joystickRect, "Handle");
+        var touchAreaImage = GetOrAdd<Image>(joystickGO);
+        touchAreaImage.color = new Color(0f, 0f, 0f, 0.001f);
+        touchAreaImage.raycastTarget = true;
+
+        var bgGO = FindOrCreateChild(joystickRect, "Background");
+        var bgRect = GetOrAdd<RectTransform>(bgGO);
+        bgRect.anchorMin = new Vector2(0.5f, 0.5f);
+        bgRect.anchorMax = new Vector2(0.5f, 0.5f);
+        bgRect.pivot = new Vector2(0.5f, 0.5f);
+        bgRect.anchoredPosition = Vector2.zero;
+        bgRect.sizeDelta = new Vector2(200f, 200f);
+        var bgImage = GetOrAdd<Image>(bgGO);
+        bgImage.sprite = RuntimeSpriteLibrary.GetCircle();
+        bgImage.preserveAspect = true;
+        bgImage.color = new Color(1f, 1f, 1f, 0.25f);
+        bgImage.raycastTarget = false;
+
+        var handleGO = FindOrCreateChild(bgRect, "Handle");
         var handleRect = GetOrAdd<RectTransform>(handleGO);
         handleRect.anchorMin = new Vector2(0.5f, 0.5f);
         handleRect.anchorMax = new Vector2(0.5f, 0.5f);
@@ -277,12 +353,16 @@ public static class GameStartSceneAutoSetup
         handleRect.anchoredPosition = Vector2.zero;
         handleRect.sizeDelta = new Vector2(90f, 90f);
         var handleImage = GetOrAdd<Image>(handleGO);
+        handleImage.sprite = RuntimeSpriteLibrary.GetCircle();
+        handleImage.preserveAspect = true;
         handleImage.color = new Color(1f, 1f, 1f, 0.6f);
+        handleImage.raycastTarget = false;
 
         var joystick = GetOrAdd<FloatingJoystick>(joystickGO);
         var serialized = new SerializedObject(joystick);
-        serialized.FindProperty("_background").objectReferenceValue = joystickRect;
+        serialized.FindProperty("_background").objectReferenceValue = bgRect;
         serialized.FindProperty("_handle").objectReferenceValue = handleRect;
+        serialized.FindProperty("_floatingMode").boolValue = true;
         serialized.ApplyModifiedPropertiesWithoutUndo();
 
         return joystick;

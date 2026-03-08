@@ -32,6 +32,10 @@ namespace OneDayGame.Domain.Gameplay
 
         int KillsInCurrentStage { get; }
 
+        int TotalKills { get; }
+
+        float TotalDamageTaken { get; }
+
         RunSnapshot Snapshot { get; }
 
         event Action<RunSnapshot> SnapshotChanged;

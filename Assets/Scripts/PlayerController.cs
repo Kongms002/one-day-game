@@ -1,8 +1,9 @@
 using UnityEngine;
+using OneDayGame.Presentation.Input;
 
 public class PlayerController : MonoBehaviour
 {
-    public FloatingJoystick joystick;
+    public OneDayGame.Presentation.Input.FloatingJoystick joystick;
     public float speed = 5f;
 
     public Sprite[] directionSprites; // 0: South, 1: SouthEast, 2: East, 3: NorthEast, 4: North, 5: NorthWest, 6: West, 7: SouthWest
@@ -15,10 +16,24 @@ public class PlayerController : MonoBehaviour
 
     void Update()
     {
-        Vector3 dir = new Vector3(joystick.Horizontal, joystick.Vertical, 0f);
+        if (joystick == null)
+        {
+            return;
+        }
+
+        var axis = joystick.Direction;
+        Vector3 dir = new Vector3(axis.X, axis.Y, 0f);
 
         if (dir.sqrMagnitude < 0.01f)
+        {
             return;
+        }
+
+        if (sr != null && directionSprites != null && directionSprites.Length == 8)
+        {
+            int dirIndex = GetDirectionIndex(dir);
+            sr.sprite = directionSprites[dirIndex];
+        }
 
         if (sr != null && directionSprites != null && directionSprites.Length == 8)
         {
