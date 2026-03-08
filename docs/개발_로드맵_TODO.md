@@ -27,6 +27,9 @@
 - `WeaponLoadoutService` 기반 4슬롯 기본 로드아웃 초기화가 `GameBootstrap`에 연결됨.
 - HUD는 좌상단 세로 슬롯 리스트 + 슬롯 클릭 상세 패널(확인 버튼 닫기) 구조로 동작.
 - 레벨업 선택 시 기본 업그레이드(공격력 선택)에서 전체 슬롯 레벨이 함께 상승하도록 연결됨.
+- 플레이어 이동 입력은 `FrameTick` 우선 + `MoveAxis` fallback 구조로 보강됨(입력 포트 일시 불안정 시 이동 끊김 완화).
+- 플레이어 공격 넉백은 옵션화(`PlayerView`): 일반 몬스터만 넉백 적용, 보스는 넉백 면역.
+- 초기 화력 밸런스는 `WeaponCatalog` 및 `StageProfile` 기본값 기준으로 하향 조정됨.
 
 ### 완료 기준
 - 게임 실행 시 4개 슬롯이 비어있는 상태로 시작
@@ -84,3 +87,42 @@
 - 다중 무기 동시 판정 성능(적 수치 급증 구간)
 - DOT/중독 비치명 규칙 예외 처리 충돌
 - 시너지 계산 중복 적용/중복 스택 경합
+
+## Boss 리팩토링 실행 체크리스트 (현재 스프린트 반영)
+
+### P0 (이번 스프린트 필수)
+1. [x] 보스 스킬 도메인 계약 추가
+   - `Assets/Scripts/Domain/Boss/BossRuntimeContracts.cs`
+   - `ITargetingStrategy`, `ISkillEffect`, `IDamageCalculator`, `IProjectileSpawner`, `IAreaResolver`, `ICooldownScheduler`, `ISkillSelector`, `IBossSkillExecutor`
+2. [x] ScriptableObject 기반 보스 설정 스키마 1차 추가
+   - `Assets/Scripts/Domain/Boss/BossConfigSo.cs`
+   - `BossConfigSO`, `BossPhaseSO`, `BossSkillSO`, `TargetingStrategySO`, `SkillEffectSO`(+ 기본 구현)
+3. [x] 보스 스폰 책임 분리 1차
+   - `SpawnService.TrySpawnBoss` 내부 계산 로직을 `BossSpawnPolicy`로 이관
+   - 파일: `Assets/Scripts/Application/Boss/BossSpawnPolicy.cs`
+
+### P1 (다음 구현 단위)
+1. [x] 보스 스킬 런타임 서비스 기본 구현
+   - `Assets/Scripts/Application/Boss/BossSkillRuntimeServices.cs`
+   - `BossSkillCatalog`, `BossCooldownScheduler`, `WeightedSkillSelector`, `BossSkillExecutor`, `BossPhaseResolver`
+2. [ ] 보스 1종 PoC에 `BossSkillExecutor` 실제 연결
+   - `BossController` 또는 보스 전용 런타임 어댑터 신규 도입
+   - 기존 단일 공격 루틴과 동등 동작 검증
+3. [ ] 스킬 파이프라인 이펙트를 실제 전투 판정과 연결
+   - `DamageCalculator`/`ProjectileSpawner`/`AreaResolver` 인프라 어댑터 구현
+
+### P1 (진행 업데이트)
+1. [x] 보스 1종 런타임 어댑터 연결
+   - `Assets/Scripts/Presentation/Boss/BossSkillBrain.cs`
+   - `GameBootstrap` 보스 스폰 경로에서 `BossSkillBrain` 초기화 연결
+2. [x] 전투 어댑터 1차 연결
+   - `BossSkillBrain` 내부에 `BossDamageCalculator`, `BossProjectileSpawner`, `BossAreaResolver` 연결
+   - `DamageEffect`/`AreaDamageEffect`가 실제 타깃 컨텍스트를 통해 적용
+
+### P2 (안정화/운영)
+1. [ ] Boss SO 유효성 검사기(에디터) 추가
+   - 필수 필드/중복 ID/위상(phase) 범위/Null 참조 검증
+2. [ ] DI 조립 경계 명확화
+   - `GameBootstrap` 직접 `new` 축소, 보스 조립용 installer/composition 단계 분리
+3. [ ] KPI 기반 디버그 로그 추가
+   - `SkillAttempt`, `CastFail`, `TargetMissing`, `HitSuccess`
