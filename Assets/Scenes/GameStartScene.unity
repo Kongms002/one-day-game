@@ -1379,21 +1379,20 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::RandomMapGenerator
   tilemap: {fileID: 1100606703}
   tiles:
-  - {fileID: 11400000, guid: e30854a04e300654aac4134f646f1b9c, type: 2}
-  - {fileID: 11400000, guid: 46d15208e9d0ead45a2102f4f1df964a, type: 2}
-  - {fileID: 11400000, guid: 544c05deab08cd84cad84e13544c3138, type: 2}
-  - {fileID: 11400000, guid: ad1db98a6dc116f409bf24ef91705dc7, type: 2}
-  - {fileID: 11400000, guid: a28711a6379cfb94ab6b2daa2e8752cf, type: 2}
-  - {fileID: 11400000, guid: ad1db98a6dc116f409bf24ef91705dc7, type: 2}
-  - {fileID: 11400000, guid: ffe6fa01ffb76d64c96f3bdbacaa7816, type: 2}
-  - {fileID: 11400000, guid: 764d87232932bf943957dda6884ced54, type: 2}
-  - {fileID: 11400000, guid: f4588cb19421503488de13cb2a35bb32, type: 2}
-  - {fileID: 11400000, guid: 9107f7a1d3cf5504f89fa6bae26cce2f, type: 2}
-  - {fileID: 11400000, guid: 544c05deab08cd84cad84e13544c3138, type: 2}
-  - {fileID: 11400000, guid: ad1db98a6dc116f409bf24ef91705dc7, type: 2}
-  - {fileID: 11400000, guid: f4588cb19421503488de13cb2a35bb32, type: 2}
-  - {fileID: 11400000, guid: ffe6fa01ffb76d64c96f3bdbacaa7816, type: 2}
-  - {fileID: 11400000, guid: e30854a04e300654aac4134f646f1b9c, type: 2}
+  - {fileID: 11400000, guid: 2cc5261c4a45d294cb3a3c89c535c3a0, type: 2}
+  - {fileID: 11400000, guid: bd53e7932c83ea74a9e56ec6ac9fb1a6, type: 2}
+  - {fileID: 11400000, guid: 8f078ead4b5e72f4a8586f14a6ee9a93, type: 2}
+  - {fileID: 11400000, guid: 1326d567becd7944799e863d07168e7a, type: 2}
+  - {fileID: 11400000, guid: 058a634e883bcc546ad3f17f071517c3, type: 2}
+  - {fileID: 11400000, guid: a9fe1d65908132d4980044c1b80b4312, type: 2}
+  - {fileID: 11400000, guid: 2cc5261c4a45d294cb3a3c89c535c3a0, type: 2}
+  - {fileID: 11400000, guid: 2cc5261c4a45d294cb3a3c89c535c3a0, type: 2}
+  - {fileID: 11400000, guid: 058a634e883bcc546ad3f17f071517c3, type: 2}
+  - {fileID: 11400000, guid: 8f078ead4b5e72f4a8586f14a6ee9a93, type: 2}
+  - {fileID: 11400000, guid: 2cc5261c4a45d294cb3a3c89c535c3a0, type: 2}
+  - {fileID: 11400000, guid: 058a634e883bcc546ad3f17f071517c3, type: 2}
+  - {fileID: 11400000, guid: 2cc5261c4a45d294cb3a3c89c535c3a0, type: 2}
+  - {fileID: 11400000, guid: 2cc5261c4a45d294cb3a3c89c535c3a0, type: 2}
   width: 50
   height: 50
 --- !u!4 &2040124154
