@@ -145,6 +145,11 @@ namespace OneDayGame.Application
 
         public void RegisterEnemyKill(int reward)
         {
+            RegisterEnemyKill(reward, allowStageProgression: true, forceStageAdvance: false);
+        }
+
+        public void RegisterEnemyKill(int reward, bool allowStageProgression, bool forceStageAdvance)
+        {
             if (_isDead)
             {
                 return;
@@ -154,7 +159,12 @@ namespace OneDayGame.Application
             _killsInStage++;
             _totalKills++;
 
-            if (_killsInStage >= GetStageGoal(_stage))
+            if (forceStageAdvance)
+            {
+                _stage++;
+                _killsInStage = 0;
+            }
+            else if (allowStageProgression && _killsInStage >= GetStageGoal(_stage))
             {
                 _stage++;
                 _killsInStage = 0;

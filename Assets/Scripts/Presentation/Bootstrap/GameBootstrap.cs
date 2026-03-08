@@ -8,18 +8,30 @@ using OneDayGame.Domain.Randomness;
 using OneDayGame.Domain.Repositories;
 using OneDayGame.Domain.Weapons;
 using OneDayGame.Infrastructure.Policies;
+using OneDayGame.Domain.Boss;
 using OneDayGame.Infrastructure.Services;
 using OneDayGame.Presentation.Gameplay;
+using OneDayGame.Presentation.Boss;
 using OneDayGame.Presentation.Input;
 using OneDayGame.Presentation.Ui;
+using TMPro;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 
 namespace OneDayGame.Presentation.Bootstrap
 {
     [DefaultExecutionOrder(-500)]
     public sealed class GameBootstrap : MonoBehaviour
     {
+        private const string StartTitleObjectName = "Title";
+        private const string TapToStartObjectName = "TapToStart";
+        private const string StartScreenTitleText = "Adventurous";
+        private const string StartScreenPromptText = "TAP TO START";
+
         [Header("Gameplay")]
         [SerializeField]
         private RuntimeInputPort _inputPort;
@@ -89,10 +101,19 @@ namespace OneDayGame.Presentation.Bootstrap
         private StageConfig _stageProfileConfig;
 
         [SerializeField]
-        private bool _enableUltimate;
+        private BossConfigSO _bossConfig;
+
+        [SerializeField]
+        private bool _enableUltimate = false;
 
         [SerializeField]
         private bool _showEnemyHpBarsInDev = true;
+
+        [SerializeField]
+        private bool _logInputTickInDev;
+
+        [SerializeField]
+        private bool _useLegacyRandomTilemapVisual;
 
         private RunSessionService _runSession;
         private SpawnService _spawnService;
@@ -128,12 +149,25 @@ namespace OneDayGame.Presentation.Bootstrap
         private bool _debugHasInputTick;
         private float _nextDebugLogAt;
         private const float DebugLogInterval = 0.25f;
+        private bool _isRunInputEnabled;
+        private readonly RuntimeInputCoordinator _runtimeInputCoordinator = new RuntimeInputCoordinator();
+        private bool _isWaitingForStartInput = true;
+        private bool _awaitingRestartedStart;
+        private GameObject _startTitle;
+        private GameObject _startTapPrompt;
+        private TextMeshProUGUI _startTitleText;
+        private TextMeshProUGUI _startTapText;
 
         private void Awake()
         {
+            _isRunInputEnabled = false;
+            SetHudVisible(false);
+            ScanMissingScriptsInActiveScene();
             EnsureRuntimeReferences();
+            _runtimeInputCoordinator.SetRuntimeInputEnabled(_inputPort, false);
             EnsureRuntimeInputDebug();
             SetupServices();
+            SyncLegacyRandomTilemapVisibility();
             SetupFactories();
             SetupPlayer();
             EnemyView.SetHpBarVisible(_showEnemyHpBarsInDev);
@@ -148,19 +182,244 @@ namespace OneDayGame.Presentation.Bootstrap
                 _hudPresenter.RestartRequested += RestartRun;
             }
 
-            _runSession.StartRun();
-            Time.timeScale = 1f;
+            ResolveStartScreenUi();
+            EnterStartScreenState();
             _deadElapsed = 0f;
             _lastAppliedStage = _runSession.Stage;
             _enemySpawnSerial = 0;
             EnsureRoundMap();
             _roundMapView?.ResetToStage(_runSession.Stage);
+            ApplyPlayableBoundsFromRoundMap();
+            var playerStartPosition = ResolvePlayerStartPosition();
+            if (_player != null)
+            {
+                _player.ResetPosition(playerStartPosition);
+            }
             _isInitialized = true;
+        }
+
+        private void OnEnable()
+        {
+            SceneManager.sceneLoaded += OnActiveSceneChanged;
+        }
+
+        private void OnDisable()
+        {
+            SceneManager.sceneLoaded -= OnActiveSceneChanged;
+        }
+
+        private void OnActiveSceneChanged(Scene scene, LoadSceneMode mode)
+        {
+            EnsureRuntimeReferences();
+            bool shouldEnableInput = !_isLevelUpPaused
+                && _runtimeInputCoordinator.ShouldRuntimeInputBeEnabled(_isRunInputEnabled, _runSession);
+            _runtimeInputCoordinator.SetRuntimeInputEnabled(
+                _inputPort,
+                shouldEnableInput);
+            if (_roundMapView == null)
+            {
+                EnsureRoundMap();
+            }
+            if (_roundMapView != null && _runSession != null)
+            {
+                _roundMapView.ResetToStage(_runSession.Stage);
+                ApplyPlayableBoundsFromRoundMap();
+            }
+
+            var playerStartPosition = ResolvePlayerStartPosition();
+            if (_player != null)
+            {
+                _player.ResetPosition(playerStartPosition);
+            }
+
+            SetupCameraFollow();
+
+            if (_isWaitingForStartInput)
+            {
+                return;
+            }
+
+            _runtimeInputCoordinator.RepositionRuntimeJoystickAtPlayerStart(_inputPort, playerStartPosition);
+        }
+
+        private void ResolveStartScreenUi()
+        {
+            if (_startTitle == null)
+            {
+                _startTitle = GameObject.Find(StartTitleObjectName);
+                if (_startTitle != null)
+                {
+                    _startTitleText = _startTitle.GetComponent<TextMeshProUGUI>();
+                }
+            }
+
+            if (_startTapPrompt == null)
+            {
+                _startTapPrompt = GameObject.Find(TapToStartObjectName);
+                if (_startTapPrompt != null)
+                {
+                    _startTapText = _startTapPrompt.GetComponent<TextMeshProUGUI>();
+                }
+            }
+        }
+
+        private void EnterStartScreenState()
+        {
+            _isWaitingForStartInput = true;
+            _isRunInputEnabled = false;
+            SetHudVisible(false);
+            ShowStartScreen();
+
+            _runtimeInputCoordinator.SetRuntimeInputEnabled(
+                _inputPort,
+                _runtimeInputCoordinator.ShouldRuntimeInputBeEnabled(false, _runSession));
+        }
+
+        private void StartGameFromStartScreen()
+        {
+            _isWaitingForStartInput = false;
+            HideStartScreen();
+            SetHudVisible(true);
+            _isRunInputEnabled = true;
+            _runtimeInputCoordinator.SetRuntimeInputEnabled(
+                _inputPort,
+                _runtimeInputCoordinator.ShouldRuntimeInputBeEnabled(_isRunInputEnabled, _runSession));
+            _runSession.StartRun();
+            Time.timeScale = 1f;
+
+            if (_player != null)
+            {
+                var playerStartPosition = ResolvePlayerStartPosition();
+                _player.ResetPosition(playerStartPosition);
+                _runtimeInputCoordinator.RepositionRuntimeJoystickAtPlayerStart(_inputPort, playerStartPosition);
+            }
+        }
+
+        private void ShowStartScreen()
+        {
+            ResolveStartScreenUi();
+
+            if (_startTitleText != null)
+            {
+                _startTitleText.text = StartScreenTitleText;
+            }
+
+            if (_startTapText != null)
+            {
+                _startTapText.text = StartScreenPromptText;
+            }
+
+            if (_startTitle != null)
+            {
+                _startTitle.SetActive(true);
+            }
+
+            if (_startTapPrompt != null)
+            {
+                _startTapPrompt.SetActive(true);
+            }
+        }
+
+        private void HideStartScreen()
+        {
+            if (_startTitle != null)
+            {
+                _startTitle.SetActive(false);
+            }
+
+            if (_startTapPrompt != null)
+            {
+                _startTapPrompt.SetActive(false);
+            }
+        }
+
+        private void SetHudVisible(bool visible)
+        {
+            if (_hudPresenter == null)
+            {
+                return;
+            }
+
+            _hudPresenter.gameObject.SetActive(visible);
+        }
+
+        private bool HasStartInputThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            if (Keyboard.current != null)
+            {
+                if (Keyboard.current.spaceKey.wasPressedThisFrame || Keyboard.current.enterKey.wasPressedThisFrame)
+                {
+                    return true;
+                }
+            }
+
+            if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
+            {
+                return true;
+            }
+
+            if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.wasPressedThisFrame)
+            {
+                return true;
+            }
+
+            if (Gamepad.current != null)
+            {
+                if (Gamepad.current.startButton.wasPressedThisFrame ||
+                    Gamepad.current.buttonSouth.wasPressedThisFrame)
+                {
+                    return true;
+                }
+            }
+#else
+            if (UnityEngine.Input.GetKeyDown(KeyCode.Space) || UnityEngine.Input.GetKeyDown(KeyCode.Return))
+            {
+                return true;
+            }
+
+            if (UnityEngine.Input.GetMouseButtonDown(0))
+            {
+                return true;
+            }
+
+            if (UnityEngine.Input.touchCount > 0 && UnityEngine.Input.GetTouch(0).phase == UnityEngine.TouchPhase.Began)
+            {
+                return true;
+            }
+#endif
+
+            if (_inputPort != null)
+            {
+                var moveAxis = _inputPort.MoveAxis;
+                if (moveAxis.X != 0f || moveAxis.Y != 0f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void SetupServices()
         {
             _repository = new PlayerPrefsRunRepository();
+
+            if (_stageProfileConfig == null)
+            {
+                _stageProfileConfig = Resources.Load<StageConfig>("StageConfig");
+                if (_stageProfileConfig == null)
+                {
+                    Debug.LogWarning(
+                        "[OneDayGame][Config] _stageProfileConfig is not assigned. " +
+                        "Current gameplay uses DefaultStageProfileProvider. " +
+                        "Please assign StageConfig via Tools > OneDayGame > Gameplay Config Overview.");
+                }
+                else
+                {
+                    Debug.Log("[OneDayGame][Config] Loaded StageConfig from Resources/StageConfig.asset.");
+                }
+            }
 
             _stageProfileProvider = _stageProfileConfig != null
                 ? (IStageProfileProvider) _stageProfileConfig
@@ -174,6 +433,7 @@ namespace OneDayGame.Presentation.Bootstrap
             var mapPolicy = new DefaultMapPolicy(_stageProfileProvider, startProfile.Stage);
             _weaponPolicy = new DefaultWeaponPolicy(_stageProfileProvider);
             _weaponLoadout = WeaponLoadoutService.CreateDefault();
+            ValidateStageWeaponConfigCoverage();
             _upgradeRuleService = new WeaponUpgradeRuleService();
 
             _runSession = new RunSessionService(_runConfig, _difficultyPolicy, _repository);
@@ -326,7 +586,7 @@ namespace OneDayGame.Presentation.Bootstrap
             if (_difficultyPolicy != null && _runSession != null)
             {
                 var enemyData = _difficultyPolicy.GetEnemyData(_runSession.Stage);
-                initialMoveSpeed = Mathf.Max(0.1f, enemyData.MoveSpeed * 1.1f);
+                initialMoveSpeed = Mathf.Max(0.1f, enemyData.MoveSpeed * 1.2f);
             }
 
             var existingPlayer = Object.FindFirstObjectByType<PlayerView>(FindObjectsInactive.Include);
@@ -409,11 +669,6 @@ namespace OneDayGame.Presentation.Bootstrap
                 _player.SetAreaBounds(-7.8f, 7.8f, -4.8f, 4.8f);
             }
 
-            if (_inputPort != null)
-            {
-                _inputPort.FrameTick += OnInputFrame;
-            }
-
             _player.ResetPosition(GetMapCenterPosition());
             SetupCameraFollow();
         }
@@ -438,6 +693,7 @@ namespace OneDayGame.Presentation.Bootstrap
             }
 
             follow.SetTarget(_player.transform);
+            ConfigureCameraBounds(follow);
         }
 
         private void Update()
@@ -448,9 +704,17 @@ namespace OneDayGame.Presentation.Bootstrap
             }
 
             RefreshRuntimeInputDebug();
-            if (_player != null && _inputPort != null)
+            if (_isWaitingForStartInput)
             {
-                _player.SetInputAxis(_inputPort.MoveAxis);
+                SetHudVisible(false);
+                _hudPresenter?.HideLevelUpChoices();
+                _hudPresenter?.HideRunResult();
+                if (HasStartInputThisFrame())
+                {
+                    StartGameFromStartScreen();
+                }
+
+                return;
             }
 
             _runSession.Tick(Time.deltaTime);
@@ -474,6 +738,11 @@ namespace OneDayGame.Presentation.Bootstrap
 
         private void OnInputFrame(VectorInputTick tick)
         {
+            if (_isLevelUpPaused)
+            {
+                return;
+            }
+
             if (_player != null)
             {
                 _player.SetInputAxis(tick.MoveAxis);
@@ -481,11 +750,12 @@ namespace OneDayGame.Presentation.Bootstrap
 
             _debugHasInputTick = true;
             _debugInputTick = tick;
-            if (Time.unscaledTime >= _nextDebugLogAt)
+            if (_logInputTickInDev && Time.unscaledTime >= _nextDebugLogAt)
             {
                 var runtimeInput = _inputPort as RuntimeInputPort;
                 var joystickReady = runtimeInput != null && runtimeInput.HasActiveJoystick;
-                Debug.Log($"[InputTick] move=({tick.MoveAxis.X:0.00},{tick.MoveAxis.Y:0.00}) ultimate={tick.UltimatePressed} action={tick.AnyActionPressed} joystickReady={joystickReady}");
+                string joystickDebug = runtimeInput != null ? runtimeInput.JoystickDebug : "n/a";
+                Debug.Log($"[InputTick] move=({tick.MoveAxis.X:0.00},{tick.MoveAxis.Y:0.00}) ultimate={tick.UltimatePressed} action={tick.AnyActionPressed} joystickReady={joystickReady} joystick={joystickDebug}");
                 _nextDebugLogAt = Time.unscaledTime + DebugLogInterval;
             }
 
@@ -515,6 +785,7 @@ namespace OneDayGame.Presentation.Bootstrap
             string joystickReady = runtimeInput == null
                 ? "n/a"
                 : (runtimeInput.HasActiveJoystick ? "OK" : "NoJoystick");
+            string joystickInfo = runtimeInput == null ? "n/a" : runtimeInput.JoystickDebug;
             string moveSource = _debugHasInputTick ? "FrameTick" : "Port";
             string playerPos = _player != null ? _player.transform.position.ToString("F2") : "(none)";
 
@@ -523,8 +794,65 @@ namespace OneDayGame.Presentation.Bootstrap
                 $"move({moveSource}): X={tick.MoveAxis.X:0.00}, Y={tick.MoveAxis.Y:0.00}\n" +
                 $"runStarted:{_runSession != null && !_runSession.IsDead} sessionAlive:{_runSession != null && _runSession.IsDead == false}\n" +
                 $"joystick: {joystickReady}\n" +
+                $"joystickInfo: {joystickInfo}\n" +
                 $"player: {(_player != null ? _player.name : "null")}\n" +
                 $"playerPos: {playerPos}";
+        }
+
+        private void ScanMissingScriptsInActiveScene()
+        {
+            var scene = SceneManager.GetActiveScene();
+            if (!scene.IsValid())
+            {
+                return;
+            }
+
+            var roots = scene.GetRootGameObjects();
+            for (int i = 0; i < roots.Length; i++)
+            {
+                var root = roots[i];
+                if (root == null)
+                {
+                    continue;
+                }
+
+                var childTransforms = root.GetComponentsInChildren<Transform>(true);
+                for (int t = 0; t < childTransforms.Length; t++)
+                {
+                    var child = childTransforms[t];
+                    if (child == null || child.gameObject == null)
+                    {
+                        continue;
+                    }
+
+                    var components = child.GetComponents<Component>();
+                    for (int j = 0; j < components.Length; j++)
+                    {
+                        if (components[j] == null)
+                        {
+                            Debug.LogError($"[MissingScript] {GetTransformPath(child)} index={j}. Reassign script in Inspector.");
+                        }
+                    }
+                }
+            }
+        }
+
+        private static string GetTransformPath(Transform target)
+        {
+            if (target == null)
+            {
+                return "(null)";
+            }
+
+            var current = target;
+            var result = target.name;
+            while (current.parent != null)
+            {
+                current = current.parent;
+                result = $"{current.name}/{result}";
+            }
+
+            return result;
         }
 
         private void OnSpawnRequest(SpawnRequest request)
@@ -546,10 +874,52 @@ namespace OneDayGame.Presentation.Bootstrap
 
             enemy.SetDestroyOnDeath(false);
             enemy.Initialize(request.EnemyData, _player != null ? _player.transform : transform);
+            ConfigureBossRuntime(enemy, request.EnemyData);
             _enemySpawnSerial++;
             ApplyEnemyStateAnimation(enemy, _enemySpawnSerial);
             enemy.EnemyDied += OnEnemyDied;
             _enemies.Add(enemy);
+        }
+
+        private void ConfigureBossRuntime(EnemyView enemy, EnemyData enemyData)
+        {
+            if (enemy == null)
+            {
+                return;
+            }
+
+            var bossBrain = enemy.GetComponent<BossSkillBrain>();
+            if (!enemyData.IsBoss || _bossConfig == null || _runSession == null || _randomService == null)
+            {
+                if (bossBrain != null)
+                {
+                    bossBrain.DisableAndReset();
+                }
+
+                return;
+            }
+
+            if (bossBrain == null)
+            {
+                bossBrain = enemy.gameObject.AddComponent<BossSkillBrain>();
+            }
+
+            Transform target = _player != null ? _player.transform : transform;
+            bossBrain.Initialize(_bossConfig, enemy, target, _runSession, _randomService);
+        }
+
+        private static void ResetBossRuntime(EnemyView enemy)
+        {
+            if (enemy == null)
+            {
+                return;
+            }
+
+            var bossBrain = enemy.GetComponent<BossSkillBrain>();
+            if (bossBrain != null)
+            {
+                bossBrain.DisableAndReset();
+            }
         }
 
         private void OnMedKitRequest(SpawnRequest request)
@@ -635,7 +1005,24 @@ namespace OneDayGame.Presentation.Bootstrap
             enemy.EnemyDied -= OnEnemyDied;
             if (_enemies.Remove(enemy))
             {
-                _runSession.RegisterEnemyKill(enemy.ScoreValue);
+                bool isBossEnemy = enemy.Data.IsBoss;
+                bool isBossStage = _runSession != null && IsBossGateStage(_runSession.Stage);
+                if (_runSession != null)
+                {
+                    if (isBossEnemy)
+                    {
+                        _runSession.RegisterEnemyKill(enemy.ScoreValue, allowStageProgression: false, forceStageAdvance: true);
+                    }
+                    else if (isBossStage)
+                    {
+                        _runSession.RegisterEnemyKill(enemy.ScoreValue, allowStageProgression: false, forceStageAdvance: false);
+                    }
+                    else
+                    {
+                        _runSession.RegisterEnemyKill(enemy.ScoreValue);
+                    }
+                }
+
                 SpawnExperienceOrb(enemy.transform.position, Mathf.Max(1, enemy.ScoreValue / 3));
 
                 if (enemy.Archetype == EnemyArchetype.Multiply)
@@ -643,6 +1030,7 @@ namespace OneDayGame.Presentation.Bootstrap
                     SpawnSplitEnemies(enemy.transform.position, enemy.Data);
                 }
 
+                ResetBossRuntime(enemy);
                 _enemyFactory?.Release(enemy);
             }
         }
@@ -731,11 +1119,16 @@ namespace OneDayGame.Presentation.Bootstrap
 
         private void OnRunEnded(RunSnapshot snapshot)
         {
+            _isRunInputEnabled = false;
+            _runtimeInputCoordinator.SetRuntimeInputEnabled(
+                _inputPort,
+                _runtimeInputCoordinator.ShouldRuntimeInputBeEnabled(_isRunInputEnabled, _runSession));
             _spawnService.Reset();
             _isLevelUpPaused = false;
             _pendingLevelUps = 0;
             Time.timeScale = 1f;
             _hudPresenter?.HideLevelUpChoices();
+            _isWaitingForStartInput = false;
             if (_runSession != null)
             {
                 Debug.Log($"[OneDayGame][RunSummary] score={snapshot.Score}, stage={snapshot.Stage}, kills={_runSession.TotalKills}, damageTaken={_runSession.TotalDamageTaken:F0}, survival={snapshot.ElapsedTime:F1}s");
@@ -768,6 +1161,7 @@ namespace OneDayGame.Presentation.Bootstrap
             }
 
             _isLevelUpPaused = true;
+            _runtimeInputCoordinator.SetRuntimeInputEnabled(_inputPort, false);
             Time.timeScale = 0f;
             BuildUpgradeChoices();
             bool opened = _hudPresenter.ShowLevelUpChoices(
@@ -780,6 +1174,9 @@ namespace OneDayGame.Presentation.Bootstrap
             if (!opened)
             {
                 _isLevelUpPaused = false;
+                _runtimeInputCoordinator.SetRuntimeInputEnabled(
+                    _inputPort,
+                    _runtimeInputCoordinator.ShouldRuntimeInputBeEnabled(_isRunInputEnabled, _runSession));
                 Time.timeScale = 1f;
                 ApplyUpgradeChoice(0);
             }
@@ -790,6 +1187,9 @@ namespace OneDayGame.Presentation.Bootstrap
             if (_player == null || _runSession == null)
             {
                 _isLevelUpPaused = false;
+                _runtimeInputCoordinator.SetRuntimeInputEnabled(
+                    _inputPort,
+                    _runtimeInputCoordinator.ShouldRuntimeInputBeEnabled(_isRunInputEnabled, _runSession));
                 Time.timeScale = 1f;
                 return;
             }
@@ -809,6 +1209,9 @@ namespace OneDayGame.Presentation.Bootstrap
 
             _pendingLevelUps = Mathf.Max(0, _pendingLevelUps - 1);
             _isLevelUpPaused = false;
+            _runtimeInputCoordinator.SetRuntimeInputEnabled(
+                _inputPort,
+                _runtimeInputCoordinator.ShouldRuntimeInputBeEnabled(_isRunInputEnabled, _runSession));
             Time.timeScale = 1f;
 
             if (_pendingLevelUps > 0)
@@ -819,19 +1222,20 @@ namespace OneDayGame.Presentation.Bootstrap
 
         private void OnSnapshotChanged(RunSnapshot snapshot)
         {
-            ApplyProfileToMapPolicy(snapshot.Stage);
-
             if (snapshot.Stage == _lastAppliedStage)
             {
                 return;
             }
 
+            ApplyProfileToMapPolicy(snapshot.Stage);
+
             _lastAppliedStage = snapshot.Stage;
             EnsureRoundMap();
             _roundMapView?.ApplyForStage(snapshot.Stage);
+            ApplyPlayableBoundsFromRoundMap();
 
-            var randomMapGen = FindObjectOfType<RandomMapGenerator>();
-            if (randomMapGen != null)
+            var randomMapGen = Object.FindFirstObjectByType<RandomMapGenerator>();
+            if (_useLegacyRandomTilemapVisual && randomMapGen != null)
             {
                 randomMapGen.UpdateStage(snapshot.Stage);
             }
@@ -847,12 +1251,14 @@ namespace OneDayGame.Presentation.Bootstrap
             _isLevelUpPaused = false;
             Time.timeScale = 1f;
             _hudPresenter?.HideLevelUpChoices();
+            _hudPresenter?.HideRunResult();
 
             foreach (var enemy in _enemies)
             {
                 if (enemy != null)
                 {
                     enemy.EnemyDied -= OnEnemyDied;
+                    ResetBossRuntime(enemy);
                     _enemyFactory?.Release(enemy);
                 }
             }
@@ -890,25 +1296,52 @@ namespace OneDayGame.Presentation.Bootstrap
             _magnetItems.Clear();
             _expOrbs.Clear();
 
-            if (_player != null)
-            {
-                _player.ResetPosition(GetMapCenterPosition());
-            }
-
             _spawnService.Reset();
             EnsureRoundMap();
             _roundMapView?.ResetToStage(snapshot.Stage);
+            ApplyPlayableBoundsFromRoundMap();
 
-            var randomMapGen = FindObjectOfType<RandomMapGenerator>();
-            if (randomMapGen != null)
+            if (_player != null)
+            {
+                var playerStartPosition = ResolvePlayerStartPosition();
+                _player.ResetPosition(playerStartPosition);
+
+                if (!_awaitingRestartedStart)
+                {
+                    _runtimeInputCoordinator.RepositionRuntimeJoystickAtPlayerStart(_inputPort, playerStartPosition);
+                }
+            }
+
+            var randomMapGen = Object.FindFirstObjectByType<RandomMapGenerator>();
+            if (_useLegacyRandomTilemapVisual && randomMapGen != null)
             {
                 randomMapGen.UpdateStage(snapshot.Stage);
+            }
+
+            _isRunInputEnabled = !_awaitingRestartedStart;
+            _runtimeInputCoordinator.SetRuntimeInputEnabled(
+                _inputPort,
+                _runtimeInputCoordinator.ShouldRuntimeInputBeEnabled(_isRunInputEnabled, _runSession));
+
+            if (_awaitingRestartedStart)
+            {
+                _awaitingRestartedStart = false;
+                EnterStartScreenState();
+                return;
             }
         }
 
         private void RestartRun()
         {
+            if (_runSession == null)
+            {
+                return;
+            }
+
+            _awaitingRestartedStart = true;
             _runSession.Restart();
+            _hudPresenter?.HideRunResult();
+            _isWaitingForStartInput = true;
         }
 
         private void OnDestroy()
@@ -1024,6 +1457,23 @@ namespace OneDayGame.Presentation.Bootstrap
                 }
 
                 _roundMapView?.Initialize(_mapPolicy);
+                ApplyPlayableBoundsFromRoundMap();
+                var mainCamera = Camera.main;
+                if (mainCamera != null)
+                {
+                    var follow = mainCamera.GetComponent<CameraFollow2D>();
+                    if (follow != null)
+                    {
+                        ConfigureCameraBounds(follow);
+                    }
+                }
+
+                if (_useLegacyRandomTilemapVisual)
+                {
+                    ConfigureLegacyTilemapBounds();
+                }
+
+                SyncLegacyRandomTilemapVisibility();
             }
         }
 
@@ -1035,6 +1485,59 @@ namespace OneDayGame.Presentation.Bootstrap
             }
 
             return _stageProfileProvider.ResolveProfile(Mathf.Max(1, stage));
+        }
+
+        private void ValidateStageWeaponConfigCoverage()
+        {
+            if (_stageProfileProvider == null || _weaponLoadout == null || _weaponLoadout.Catalog == null)
+            {
+                return;
+            }
+
+            var catalogNames = new HashSet<string>();
+            for (int i = 0; i < _weaponLoadout.Catalog.Count; i++)
+            {
+                var definition = _weaponLoadout.Catalog[i];
+                if (definition == null || string.IsNullOrWhiteSpace(definition.DisplayName))
+                {
+                    continue;
+                }
+
+                catalogNames.Add(definition.DisplayName.Trim().ToLowerInvariant());
+            }
+
+            int[] checkpoints = { 1, 10, 11, 20, 21, 30 };
+            for (int i = 0; i < checkpoints.Length; i++)
+            {
+                int stage = checkpoints[i];
+                var profile = _stageProfileProvider.ResolveProfile(stage);
+                if (profile == null || string.IsNullOrWhiteSpace(profile.WeaponDisplayName))
+                {
+                    continue;
+                }
+
+                string key = profile.WeaponDisplayName.Trim().ToLowerInvariant();
+                if (!catalogNames.Contains(key))
+                {
+                    Debug.LogWarning($"[OneDayGame][WeaponConfig] Stage {stage} profile weapon '{profile.WeaponDisplayName}' is not in random/add catalog.");
+                }
+            }
+        }
+
+        private bool IsBossGateStage(int stage)
+        {
+            if (stage <= 0)
+            {
+                return false;
+            }
+
+            var profile = GetProfile(stage);
+            if (profile != null)
+            {
+                return profile.IsBossStage(stage);
+            }
+
+            return stage % 10 == 0;
         }
 
         private bool IsWalkablePosition(Vector2 worldPosition)
@@ -1049,6 +1552,12 @@ namespace OneDayGame.Presentation.Bootstrap
 
         private Vector3 GetMapCenterPosition()
         {
+            if (_roundMapView != null)
+            {
+                var center2D = _roundMapView.GetPlayableCenter();
+                return new Vector3(center2D.x, center2D.y, 0f);
+            }
+
             if (_mapPolicy == null)
             {
                 return new Vector3(_runConfig.PlayerStartX, _runConfig.PlayerStartY, 0f);
@@ -1059,47 +1568,222 @@ namespace OneDayGame.Presentation.Bootstrap
             return new Vector3(x, y, 0f);
         }
 
+        private void ConfigureCameraBounds(CameraFollow2D follow)
+        {
+            if (follow == null)
+            {
+                return;
+            }
+
+            if (_roundMapView != null && _roundMapView.TryGetWorldBounds(out float mapMinX, out float mapMaxX, out float mapMinY, out float mapMaxY))
+            {
+                follow.SetBounds(mapMinX, mapMaxX, mapMinY, mapMaxY);
+                return;
+            }
+
+            if (_mapPolicy == null)
+            {
+                follow.ClearBounds();
+                return;
+            }
+
+            follow.SetBounds(
+                _mapPolicy.PlayerMinX,
+                _mapPolicy.PlayerMaxX,
+                _mapPolicy.PlayerMinY,
+                _mapPolicy.PlayerMaxY);
+        }
+
+        private void ConfigureLegacyTilemapBounds()
+        {
+            if (_mapPolicy == null)
+            {
+                return;
+            }
+
+            var randomMapGen = Object.FindFirstObjectByType<RandomMapGenerator>();
+            if (randomMapGen == null)
+            {
+                return;
+            }
+
+            randomMapGen.ConfigurePlayableBounds(
+                _mapPolicy.PlayerMinX,
+                _mapPolicy.PlayerMaxX,
+                _mapPolicy.PlayerMinY,
+                _mapPolicy.PlayerMaxY);
+        }
+
+        private void SyncLegacyRandomTilemapVisibility()
+        {
+            var randomMapGen = Object.FindFirstObjectByType<RandomMapGenerator>();
+            if (randomMapGen == null || randomMapGen.gameObject == null)
+            {
+                return;
+            }
+
+            randomMapGen.gameObject.SetActive(_useLegacyRandomTilemapVisual);
+        }
+
+        private void ApplyPlayableBoundsFromRoundMap()
+        {
+            if (_player == null || _roundMapView == null)
+            {
+                return;
+            }
+
+            if (_roundMapView.TryGetWorldBounds(out float minX, out float maxX, out float minY, out float maxY))
+            {
+                _player.SetAreaBounds(minX, maxX, minY, maxY);
+            }
+
+            var mainCamera = Camera.main;
+            if (mainCamera != null)
+            {
+                var follow = mainCamera.GetComponent<CameraFollow2D>();
+                if (follow != null)
+                {
+                    ConfigureCameraBounds(follow);
+                }
+            }
+        }
+
         private void EnsureRuntimeReferences()
         {
-            HideLegacyStartOverlay();
-
+            var previousPort = _inputPort;
+            var ensuredInputPort = _runtimeInputCoordinator.EnsureRuntimeReferences(_inputPort, false, null, "Interact");
+            _inputPort = ensuredInputPort as RuntimeInputPort;
             if (_inputPort == null)
             {
-                _inputPort = Object.FindFirstObjectByType<RuntimeInputPort>();
+                return;
             }
 
-            if (_inputPort == null)
+            if (previousPort != null && previousPort != _inputPort)
             {
-                var inputObject = new GameObject("RuntimeInputPort");
-                _inputPort = inputObject.AddComponent<RuntimeInputPort>();
-            }
-            else
-            {
-                if (!_inputPort.isActiveAndEnabled)
-                {
-                    _inputPort.enabled = true;
-                }
-
-                if (_inputPort.gameObject != null && !_inputPort.gameObject.activeInHierarchy)
-                {
-                    _inputPort.gameObject.SetActive(true);
-                }
+                previousPort.FrameTick -= OnInputFrame;
             }
 
-            _inputPort.AutoBindFallbackJoysticks();
+            _inputPort.FrameTick -= OnInputFrame;
+            _inputPort.FrameTick += OnInputFrame;
 
-            if (!_enableUltimate)
+            if (_player != null)
             {
-                var ultimateButtons = Object.FindObjectsByType<UltimatePressButton>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-                for (int i = 0; i < ultimateButtons.Length; i++)
+                _player.BindInputPort(_inputPort);
+            }
+        }
+
+        private Vector3 ResolvePlayerStartPosition()
+        {
+            var center = GetMapCenterPosition();
+            if (_roundMapView != null)
+            {
+                center = SnapToTileCenter(center);
+            }
+
+            if (_roundMapView == null || _mapPolicy == null || IsWalkablePosition(new Vector2(center.x, center.y)))
+            {
+                return center;
+            }
+
+            float safeStep = 0.5f;
+            if (_roundMapView != null)
+            {
+                var tileStep = _roundMapView.GetTileStep();
+                safeStep = Mathf.Max(0.2f, Mathf.Min(tileStep.x, tileStep.y));
+            }
+
+            int maxRadius = 20;
+            for (int radius = 1; radius <= maxRadius; radius++)
+            {
+                float radiusDistance = radius * safeStep;
+                for (int axis = 0; axis < 4; axis++)
                 {
-                    var button = ultimateButtons[i];
-                    if (button != null)
+                    float x = center.x;
+                    float y = center.y;
+                    switch (axis)
                     {
-                        button.gameObject.SetActive(false);
+                        case 0:
+                            x = center.x + radiusDistance;
+                            break;
+                        case 1:
+                            x = center.x - radiusDistance;
+                            break;
+                        case 2:
+                            y = center.y + radiusDistance;
+                            break;
+                        case 3:
+                            y = center.y - radiusDistance;
+                            break;
+                    }
+
+                    float clampedX = Mathf.Clamp(x, _mapPolicy.PlayerMinX, _mapPolicy.PlayerMaxX);
+                    float clampedY = Mathf.Clamp(y, _mapPolicy.PlayerMinY, _mapPolicy.PlayerMaxY);
+                    var snapped = SnapToTileCenter(new Vector3(clampedX, clampedY, 0f));
+                    if (IsWalkablePosition(new Vector2(snapped.x, snapped.y)))
+                    {
+                        return snapped;
+                    }
+                }
+
+                for (int ix = -radius; ix <= radius; ix++)
+                {
+                    int iy = radius;
+
+                    float x = center.x + ix * safeStep;
+                    float y = center.y + iy * safeStep;
+                    float clampedX = Mathf.Clamp(x, _mapPolicy.PlayerMinX, _mapPolicy.PlayerMaxX);
+                    float clampedY = Mathf.Clamp(y, _mapPolicy.PlayerMinY, _mapPolicy.PlayerMaxY);
+                    var snapped = SnapToTileCenter(new Vector3(clampedX, clampedY, 0f));
+                    if (IsWalkablePosition(new Vector2(snapped.x, snapped.y)))
+                    {
+                        return snapped;
+                    }
+
+                    y = center.y - iy * safeStep;
+                    clampedY = Mathf.Clamp(y, _mapPolicy.PlayerMinY, _mapPolicy.PlayerMaxY);
+                    snapped = SnapToTileCenter(new Vector3(clampedX, clampedY, 0f));
+                    if (IsWalkablePosition(new Vector2(snapped.x, snapped.y)))
+                    {
+                        return snapped;
+                    }
+                }
+
+                for (int iy = -radius; iy <= radius; iy++)
+                {
+                    int ix = radius;
+
+                    float x = center.x + ix * safeStep;
+                    float y = center.y + iy * safeStep;
+                    float clampedX = Mathf.Clamp(x, _mapPolicy.PlayerMinX, _mapPolicy.PlayerMaxX);
+                    float clampedY = Mathf.Clamp(y, _mapPolicy.PlayerMinY, _mapPolicy.PlayerMaxY);
+                    var snapped = SnapToTileCenter(new Vector3(clampedX, clampedY, 0f));
+                    if (IsWalkablePosition(new Vector2(snapped.x, snapped.y)))
+                    {
+                        return snapped;
+                    }
+
+                    x = center.x - ix * safeStep;
+                    clampedX = Mathf.Clamp(x, _mapPolicy.PlayerMinX, _mapPolicy.PlayerMaxX);
+                    snapped = SnapToTileCenter(new Vector3(clampedX, clampedY, 0f));
+                    if (IsWalkablePosition(new Vector2(snapped.x, snapped.y)))
+                    {
+                        return snapped;
                     }
                 }
             }
+
+            return center;
+        }
+
+        private Vector3 SnapToTileCenter(Vector3 worldPosition)
+        {
+            if (_roundMapView == null)
+            {
+                return worldPosition;
+            }
+
+            var snapped2D = _roundMapView.SnapToTileCenter(new Vector2(worldPosition.x, worldPosition.y));
+            return new Vector3(snapped2D.x, snapped2D.y, worldPosition.z);
         }
 
         private void BuildUpgradeChoices()
@@ -1153,21 +1837,6 @@ namespace OneDayGame.Presentation.Bootstrap
             }
 
             _upgradeRuleService?.MarkApplied(choice);
-        }
-
-        private static void HideLegacyStartOverlay()
-        {
-            var tap = GameObject.Find("TapToStart");
-            if (tap != null)
-            {
-                tap.SetActive(false);
-            }
-
-            var title = GameObject.Find("Title");
-            if (title != null)
-            {
-                title.SetActive(false);
-            }
         }
 
         private void ApplyEnemyStateAnimation(EnemyView enemy, int enemySerial)

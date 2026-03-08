@@ -1,8 +1,8 @@
 using System;
+using OneDayGame.Application.Boss;
 using OneDayGame.Domain.Gameplay;
 using OneDayGame.Domain.Policies;
 using OneDayGame.Domain.Randomness;
-using UnityEngine;
 
 namespace OneDayGame.Application
 {
@@ -14,6 +14,7 @@ namespace OneDayGame.Application
         private readonly IMapPolicy _mapPolicy;
         private readonly IRandomService _randomService;
         private readonly IStageProfileProvider _stageProfileProvider;
+        private readonly BossSpawnPolicy _bossSpawnPolicy;
 
         private float _enemySpawnElapsed;
         private float _medKitSpawnElapsed;
@@ -26,7 +27,8 @@ namespace OneDayGame.Application
             IItemPolicy itemPolicy,
             IMapPolicy mapPolicy,
             IRandomService randomService,
-            IStageProfileProvider stageProfileProvider)
+            IStageProfileProvider stageProfileProvider,
+            BossSpawnPolicy bossSpawnPolicy = null)
         {
             _spawnPolicy = spawnPolicy;
             _difficultyPolicy = difficultyPolicy;
@@ -34,6 +36,7 @@ namespace OneDayGame.Application
             _mapPolicy = mapPolicy;
             _randomService = randomService;
             _stageProfileProvider = stageProfileProvider;
+            _bossSpawnPolicy = bossSpawnPolicy ?? new BossSpawnPolicy();
         }
 
         public event Action<SpawnRequest> SpawnRequested;
@@ -130,36 +133,22 @@ namespace OneDayGame.Application
 
         private bool TrySpawnBoss(IRunState runState)
         {
-            if (_stageProfileProvider == null || runState == null)
+            if (_bossSpawnPolicy == null)
             {
                 return false;
             }
 
-            int stage = runState.Stage;
-            if (stage <= 0 || stage % 10 != 0)
+            if (!_bossSpawnPolicy.TryCreateBossSpawn(
+                    runState,
+                    _difficultyPolicy,
+                    _mapPolicy,
+                    _stageProfileProvider,
+                    out var request))
             {
                 return false;
             }
 
-            var profile = _stageProfileProvider.ResolveProfile(stage);
-            if (profile == null)
-            {
-                return false;
-            }
-
-            var baseData = _difficultyPolicy.GetEnemyData(stage);
-            var bossData = new EnemyData(
-                baseData.MaxHp * profile.BossHpMultiplier,
-                baseData.MoveSpeed * profile.BossSpeedMultiplier,
-                baseData.ContactDamage * profile.BossDamageMultiplier,
-                Mathf.Max(1, baseData.ScoreValue * profile.BossScoreMultiplier),
-                baseData.ContactRadius * profile.BossContactRadiusMultiplier,
-                EnemyArchetype.Tank,
-                true);
-
-            float x = (_mapPolicy.PlayerMinX + _mapPolicy.PlayerMaxX) * 0.5f;
-            float y = _mapPolicy.PlayerMaxY - 0.8f;
-            SpawnRequested?.Invoke(SpawnRequest.Enemy(x, y, bossData));
+            SpawnRequested?.Invoke(request);
             return true;
         }
     }
