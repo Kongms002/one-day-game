@@ -22,6 +22,11 @@ namespace OneDayGame.Presentation.Gameplay
         [SerializeField]
         private LayerMask _medKitLayer = -1;
 
+        [SerializeField]
+        public Sprite[] _directionSprites; // 0: South, 1: SouthEast, 2: East, 3: NorthEast, 4: North, 5: NorthWest, 6: West, 7: SouthWest
+
+        private SpriteRenderer _mainSpriteRenderer;
+
         private IInputPort _inputPort;
         private RunSessionService _runSession;
         private IWeaponPolicy _weaponPolicy;
@@ -130,6 +135,15 @@ namespace OneDayGame.Presentation.Gameplay
             else
             {
                 transform.position = Vector3.MoveTowards(transform.position, transform.position + new Vector3(target.x, target.y, 0f), _moveSpeed * Time.deltaTime);
+            }
+
+            if (target.sqrMagnitude > 0.01f && _mainSpriteRenderer != null && _directionSprites != null && _directionSprites.Length == 8)
+            {
+                int dirIndex = GetDirectionIndex(target);
+                if (_directionSprites[dirIndex] != null)
+                {
+                    _mainSpriteRenderer.sprite = _directionSprites[dirIndex];
+                }
             }
 
             ClampPosition();
@@ -323,10 +337,19 @@ namespace OneDayGame.Presentation.Gameplay
                 spriteRenderer = gameObject.AddComponent<SpriteRenderer>();
             }
 
-            spriteRenderer.sprite = RuntimeSpriteLibrary.GetCircle();
-            spriteRenderer.color = new Color(0.15f, 0.95f, 1f, 1f);
+            if (_directionSprites == null || _directionSprites.Length != 8 || _directionSprites[0] == null)
+            {
+                spriteRenderer.sprite = RuntimeSpriteLibrary.GetCircle();
+                spriteRenderer.color = new Color(0.15f, 0.95f, 1f, 1f);
+            }
+            else
+            {
+                spriteRenderer.sprite = _directionSprites[0];
+            }
+            
             spriteRenderer.sortingOrder = 120;
             transform.localScale = new Vector3(0.62f, 0.62f, 1f);
+            _mainSpriteRenderer = spriteRenderer;
         }
 
         private void EnsureBodyHitCollider()
@@ -357,6 +380,25 @@ namespace OneDayGame.Presentation.Gameplay
             filter.useLayerMask = true;
             filter.useTriggers = true;
             return filter;
+        }
+
+        private int GetDirectionIndex(Vector2 dir)
+        {
+            float angle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
+
+            if (angle < 0)
+                angle += 360f;
+
+            if (angle >= 337.5f || angle < 22.5f) return 2; // East
+            if (angle >= 22.5f && angle < 67.5f) return 3; // NorthEast
+            if (angle >= 67.5f && angle < 112.5f) return 4; // North
+            if (angle >= 112.5f && angle < 157.5f) return 5; // NorthWest
+            if (angle >= 157.5f && angle < 202.5f) return 6; // West
+            if (angle >= 202.5f && angle < 247.5f) return 7; // SouthWest
+            if (angle >= 247.5f && angle < 292.5f) return 0; // South
+            if (angle >= 292.5f && angle < 337.5f) return 1; // SouthEast
+
+            return 0;
         }
     }
 }

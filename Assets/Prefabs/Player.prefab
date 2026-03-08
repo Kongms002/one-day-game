@@ -30,8 +30,8 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
+  m_LocalScale: {x: 30.29, y: 30.29, z: 30.29}
+  m_ConstrainProportionsScale: 1
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -92,7 +92,7 @@ SpriteRenderer:
   m_Size: {x: 1, y: 1}
   m_AdaptiveModeThreshold: 0.5
   m_SpriteTileMode: 0
-  m_WasSpriteAssigned: 0
+  m_WasSpriteAssigned: 1
   m_SpriteSortPoint: 0
 --- !u!50 &675871931212594976
 Rigidbody2D:
@@ -176,3 +176,12 @@ MonoBehaviour:
   _medKitLayer:
     serializedVersion: 2
     m_Bits: 4294967295
+  _directionSprites:
+  - {fileID: 7650439872258283022, guid: 6ca9fbae1b0eb244580fc93fbfc5808d, type: 3}
+  - {fileID: -5276374045843017712, guid: 18d39c9f5535ea341918a5f97a8a3cb6, type: 3}
+  - {fileID: 7236164480400111569, guid: c9d8d693956307f458d06a0acdd96596, type: 3}
+  - {fileID: 54277163700232942, guid: 02bafec04377afb4bb05fa71722623e3, type: 3}
+  - {fileID: -4768472233243091993, guid: 1c1a4bcad6cbe7142937aa9e6e15b83b, type: 3}
+  - {fileID: 7621039769491510632, guid: e0ec3841c23e66840b53c5546bda61cf, type: 3}
+  - {fileID: 5756864682264415833, guid: ac1f804431de586438f0f1046efe62ca, type: 3}
+  - {fileID: 9109319987447327673, guid: a977c5988a4d8a54c881446535cb29f8, type: 3}

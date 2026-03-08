@@ -472,6 +472,12 @@ namespace OneDayGame.Presentation.Bootstrap
             _lastAppliedStage = snapshot.Stage;
             EnsureRoundMap();
             _roundMapView?.ApplyForStage(snapshot.Stage);
+
+            var randomMapGen = FindObjectOfType<RandomMapGenerator>();
+            if (randomMapGen != null)
+            {
+                randomMapGen.UpdateStage(snapshot.Stage);
+            }
         }
 
         private void OnRunRestarted(RunSnapshot snapshot)
@@ -524,6 +530,12 @@ namespace OneDayGame.Presentation.Bootstrap
             _spawnService.Reset();
             EnsureRoundMap();
             _roundMapView?.ResetToStage(snapshot.Stage);
+
+            var randomMapGen = FindObjectOfType<RandomMapGenerator>();
+            if (randomMapGen != null)
+            {
+                randomMapGen.UpdateStage(snapshot.Stage);
+            }
         }
 
         private void RestartRun()
