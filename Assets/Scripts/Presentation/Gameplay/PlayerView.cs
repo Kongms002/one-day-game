@@ -14,8 +14,18 @@ namespace OneDayGame.Presentation.Gameplay
     {
         private const float WeaponVisualScale = 0.44f;
         private const float WeaponColliderRadius = 0.78f;
-        private const float WeaponKnockbackForce = 2.4f;
-        private const float BodyKnockbackForce = 1.1f;
+
+        [Header("Combat")]
+        [SerializeField]
+        private bool _enableEnemyKnockback = true;
+
+        [SerializeField]
+        [Min(0f)]
+        private float _weaponKnockbackForce = 2.4f;
+
+        [SerializeField]
+        [Min(0f)]
+        private float _bodyKnockbackForce = 1.1f;
 
         [SerializeField]
         private Rigidbody2D _rigidbody2D;
@@ -61,6 +71,7 @@ namespace OneDayGame.Presentation.Gameplay
         private Transform _magnetAura;
         private SpriteRenderer _magnetAuraRenderer;
         private Func<Vector2, bool> _walkableResolver;
+        private float _lastInputAxisTimestamp = -999f;
 
         public bool IsExpMagnetActive => _expMagnetRemaining > 0f;
 
@@ -73,9 +84,25 @@ namespace OneDayGame.Presentation.Gameplay
                 _rigidbody2D = GetComponent<Rigidbody2D>();
             }
 
+            EnsureMovementBody();
+
             EnsureVisibleSprite();
             EnsureWeaponVisual();
             EnsureBodyHitCollider();
+        }
+
+        private void EnsureMovementBody()
+        {
+            if (_rigidbody2D == null)
+            {
+                return;
+            }
+
+            _rigidbody2D.simulated = true;
+            _rigidbody2D.bodyType = RigidbodyType2D.Kinematic;
+            _rigidbody2D.gravityScale = 0f;
+            _rigidbody2D.constraints = RigidbodyConstraints2D.FreezeRotation;
+            _rigidbody2D.interpolation = RigidbodyInterpolation2D.Interpolate;
         }
 
         public void Initialize(
@@ -100,6 +127,8 @@ namespace OneDayGame.Presentation.Gameplay
             _attackSpeedMultiplier = 1f;
             _expMagnetRemaining = 0f;
             _expMagnetRadius = 0f;
+            _cachedInputAxis = InputAxis.Zero;
+            _lastInputAxisTimestamp = -999f;
             _weaponOrchestrator.Reset();
             EnsureWeaponVisual();
             EnsureBodyHitCollider();
@@ -116,6 +145,12 @@ namespace OneDayGame.Presentation.Gameplay
         public void SetInputAxis(InputAxis axis)
         {
             _cachedInputAxis = axis;
+            _lastInputAxisTimestamp = Time.unscaledTime;
+        }
+
+        public void BindInputPort(IInputPort inputPort)
+        {
+            _inputPort = inputPort;
         }
 
         public void BindWalkableResolver(Func<Vector2, bool> walkableResolver)
@@ -162,7 +197,7 @@ namespace OneDayGame.Presentation.Gameplay
 
         private void Update()
         {
-            if (_runSession == null || _inputPort == null || _weaponPolicy == null)
+            if (_runSession == null)
             {
                 return;
             }
@@ -172,12 +207,7 @@ namespace OneDayGame.Presentation.Gameplay
                 return;
             }
 
-            var move = _cachedInputAxis;
-            if (move.IsZero && _inputPort != null)
-            {
-                move = _inputPort.MoveAxis;
-            }
-            var target = new Vector2(move.X, move.Y);
+            var target = ResolveMoveTarget();
 
             if (_expMagnetRemaining > 0f)
             {
@@ -186,58 +216,9 @@ namespace OneDayGame.Presentation.Gameplay
 
             UpdateMagnetAura();
 
-            var current = _rigidbody2D != null ? _rigidbody2D.position : (Vector2) transform.position;
-            var proposed = current + target * (_moveSpeed * Time.deltaTime);
-            bool currentWalkable = IsWalkable(current);
-            if (currentWalkable && !IsWalkable(proposed))
-            {
-                var xOnly = new Vector2(proposed.x, current.y);
-                var yOnly = new Vector2(current.x, proposed.y);
-                if (IsWalkable(xOnly))
-                {
-                    proposed = xOnly;
-                }
-                else if (IsWalkable(yOnly))
-                {
-                    proposed = yOnly;
-                }
-                else
-                {
-                    proposed = current;
-                }
-            }
-            else if (!currentWalkable)
-            {
-                proposed = current + target * (_moveSpeed * Time.deltaTime);
-            }
+            ApplyMovement(target);
 
-            if (_rigidbody2D != null)
-            {
-                _rigidbody2D.linearVelocity = Vector2.zero;
-                _rigidbody2D.position = proposed;
-            }
-            else
-            {
-                transform.position = Vector3.MoveTowards(transform.position, transform.position + new Vector3(target.x, target.y, 0f), _moveSpeed * Time.deltaTime);
-            }
-
-            if (target.sqrMagnitude > 0.01f && _mainSpriteRenderer != null && _directionSprites != null && _directionSprites.Length == 8)
-            {
-                int dirIndex = GetDirectionIndex(target);
-                if (_directionSprites[dirIndex] != null)
-                {
-                    _mainSpriteRenderer.sprite = _directionSprites[dirIndex];
-                }
-            }
-
-            if (target.sqrMagnitude > 0.01f && _mainSpriteRenderer != null && _directionSprites != null && _directionSprites.Length == 8)
-            {
-                int dirIndex = GetDirectionIndex(target);
-                if (_directionSprites[dirIndex] != null)
-                {
-                    _mainSpriteRenderer.sprite = _directionSprites[dirIndex];
-                }
-            }
+            UpdateFacingSprite(target);
 
             ClampPosition();
             UpdateWeaponVisual(Time.deltaTime);
@@ -246,7 +227,7 @@ namespace OneDayGame.Presentation.Gameplay
             {
                 ExecuteLoadoutAttacks(Time.deltaTime);
             }
-            else
+            else if (_weaponPolicy != null)
             {
                 _attackCooldown -= Time.deltaTime;
                 if (_attackCooldown <= 0f)
@@ -291,7 +272,7 @@ namespace OneDayGame.Presentation.Gameplay
             if (nearestEnemy != null)
             {
                 _runSession.ApplyDamage(Mathf.Max(0.1f, nearestEnemy.ContactDamage));
-                nearestEnemy.ApplyKnockback(transform.position, BodyKnockbackForce);
+                TryApplyEnemyKnockback(nearestEnemy, transform.position, _bodyKnockbackForce);
                 if (nearestEnemy.Archetype == EnemyArchetype.SelfDestruct)
                 {
                     _runSession.ApplyDamage(Mathf.Max(0.2f, nearestEnemy.ContactDamage * 0.65f));
@@ -324,7 +305,21 @@ namespace OneDayGame.Presentation.Gameplay
                 }
 
                 enemy.ApplyDamage(damage);
-                enemy.ApplyKnockback(transform.position, WeaponKnockbackForce);
+                TryApplyEnemyKnockback(enemy, transform.position, _weaponKnockbackForce);
+            }
+        }
+
+        private void UpdateFacingSprite(Vector2 target)
+        {
+            if (target.sqrMagnitude <= 0.01f || _mainSpriteRenderer == null || _directionSprites == null || _directionSprites.Length != 8)
+            {
+                return;
+            }
+
+            int dirIndex = GetDirectionIndex(target);
+            if (_directionSprites[dirIndex] != null)
+            {
+                _mainSpriteRenderer.sprite = _directionSprites[dirIndex];
             }
         }
 
@@ -345,7 +340,9 @@ namespace OneDayGame.Presentation.Gameplay
 
         private void ClampPosition()
         {
-            var pos = transform.position;
+            Vector3 pos = _rigidbody2D != null
+                ? _rigidbody2D.position
+                : transform.position;
             pos.x = Mathf.Clamp(pos.x, _playerBoundsMin.x, _playerBoundsMax.x);
             pos.y = Mathf.Clamp(pos.y, _playerBoundsMin.y, _playerBoundsMax.y);
 
@@ -357,6 +354,90 @@ namespace OneDayGame.Presentation.Gameplay
             {
                 transform.position = pos;
             }
+        }
+
+        private Vector2 ResolveMoveTarget()
+        {
+            float tickAge = Time.unscaledTime - _lastInputAxisTimestamp;
+            if (tickAge <= 0.2f)
+            {
+                return ClampAndNormalize(_cachedInputAxis);
+            }
+
+            if (_inputPort != null)
+            {
+                var moveFromPort = _inputPort.MoveAxis;
+                _cachedInputAxis = moveFromPort;
+                return ClampAndNormalize(moveFromPort);
+            }
+
+            _cachedInputAxis = InputAxis.Zero;
+            return Vector2.zero;
+        }
+
+        private void ApplyMovement(Vector2 target)
+        {
+            if (target.sqrMagnitude < 0.0001f)
+            {
+                return;
+            }
+
+            var current = _rigidbody2D != null ? _rigidbody2D.position : (Vector2) transform.position;
+            var proposed = ResolveProposedPosition(target, current);
+            if ((proposed - current).sqrMagnitude < 0.000001f)
+            {
+                proposed = current + target * (_moveSpeed * Time.deltaTime);
+            }
+
+            if (_rigidbody2D != null)
+            {
+                _rigidbody2D.linearVelocity = Vector2.zero;
+                _rigidbody2D.position = proposed;
+                return;
+            }
+
+            transform.position = new Vector3(proposed.x, proposed.y, transform.position.z);
+        }
+
+        private static Vector2 ClampAndNormalize(InputAxis axis)
+        {
+            var move = new Vector2(axis.X, axis.Y);
+            if (move.sqrMagnitude > 1f)
+            {
+                move = move.normalized;
+            }
+
+            return move;
+        }
+
+        private Vector2 ResolveProposedPosition(Vector2 target, Vector2 currentPosition)
+        {
+            var proposed = currentPosition + target * (_moveSpeed * Time.deltaTime);
+            bool currentWalkable = IsWalkable(currentPosition);
+
+            if (currentWalkable && !IsWalkable(proposed))
+            {
+                var xOnly = new Vector2(proposed.x, currentPosition.y);
+                var yOnly = new Vector2(currentPosition.x, proposed.y);
+                if (IsWalkable(xOnly))
+                {
+                    return xOnly;
+                }
+
+                if (IsWalkable(yOnly))
+                {
+                    return yOnly;
+                }
+
+                return currentPosition;
+            }
+
+            if (!currentWalkable)
+            {
+                return currentPosition + target * (_moveSpeed * Time.deltaTime);
+            }
+
+            return proposed;
         }
 
         private void UpdateWeaponVisual(float deltaTime)
@@ -466,9 +547,14 @@ namespace OneDayGame.Presentation.Gameplay
 
             if (_weaponRenderer != null)
             {
-                _weaponRenderer.sprite = RuntimeSpriteLibrary.GetDiamond();
+                var selectedSlot = _weaponLoadout != null ? _weaponLoadout.SelectedSlot : null;
+                var selectedIcon = selectedSlot != null && selectedSlot.Definition != null
+                    ? WeaponSpriteLibrary.GetWeaponIcon(selectedSlot.Definition.Id)
+                    : null;
+
+                _weaponRenderer.sprite = selectedIcon ?? RuntimeSpriteLibrary.GetDiamond();
+                _weaponRenderer.color = selectedIcon != null ? Color.white : new Color(1f, 0.9f, 0.25f, 1f);
                 _weaponRenderer.sortingOrder = 130;
-                _weaponRenderer.color = new Color(1f, 0.9f, 0.25f, 1f);
             }
         }
 
@@ -603,7 +689,7 @@ namespace OneDayGame.Presentation.Gameplay
 
                         hitSet.Add(enemy);
                         enemy.ApplyDamage(damage);
-                        enemy.ApplyKnockback(center, WeaponKnockbackForce);
+                        TryApplyEnemyKnockback(enemy, center, _weaponKnockbackForce);
                         ApplyWeaponStatusEffects(slot, enemy, stats);
                     }
                 }
@@ -631,7 +717,7 @@ namespace OneDayGame.Presentation.Gameplay
                     }
 
                     enemy.ApplyDamage(damage);
-                    enemy.ApplyKnockback(transform.position, WeaponKnockbackForce);
+                    TryApplyEnemyKnockback(enemy, transform.position, _weaponKnockbackForce);
                     ApplyWeaponStatusEffects(slot, enemy, stats);
                 }
 
@@ -640,7 +726,8 @@ namespace OneDayGame.Presentation.Gameplay
                     WeaponAreaEffectPool.Spawn(
                         centerEnemy.transform.position,
                         Mathf.Clamp(range * 0.8f, 0.5f, 2.6f),
-                        new Color(0.45f, 0.95f, 0.55f, 0.6f));
+                        new Color(0.45f, 0.95f, 0.55f, 0.6f),
+                        WeaponSpriteLibrary.ResolveAreaVisualIcon(slot.Definition));
                 }
 
                 return;
@@ -715,6 +802,7 @@ namespace OneDayGame.Presentation.Gameplay
             Color tint = definition.Id == WeaponId.Boomerang
                 ? new Color(1f, 0.64f, 0.24f, 1f)
                 : new Color(1f, 0.94f, 0.3f, 1f);
+            var sprite = WeaponSpriteLibrary.ResolveProjectileIcon(definition);
             WeaponProjectilePool.Spawn(
                 transform.position,
                 target,
@@ -722,9 +810,46 @@ namespace OneDayGame.Presentation.Gameplay
                 speed,
                 2.2f,
                 hitRadius,
-                WeaponKnockbackForce,
+                ResolveProjectileKnockbackForce(target),
                 enemyMask,
-                tint);
+                tint,
+                sprite);
+        }
+
+        private float ResolveProjectileKnockbackForce(EnemyView target)
+        {
+            if (!_enableEnemyKnockback)
+            {
+                return 0f;
+            }
+
+            if (target != null && target.Data.IsBoss)
+            {
+                return 0f;
+            }
+
+            return Mathf.Max(0f, _weaponKnockbackForce);
+        }
+
+        private void TryApplyEnemyKnockback(EnemyView enemy, Vector3 sourcePosition, float force)
+        {
+            if (!_enableEnemyKnockback || enemy == null || enemy.IsDead)
+            {
+                return;
+            }
+
+            if (enemy.Data.IsBoss)
+            {
+                return;
+            }
+
+            float safeForce = Mathf.Max(0f, force);
+            if (safeForce <= 0f)
+            {
+                return;
+            }
+
+            enemy.ApplyKnockback(sourcePosition, safeForce);
         }
 
         private static Collider2D[] RemoveHitTarget(Collider2D[] hits, EnemyView target)
@@ -784,7 +909,7 @@ namespace OneDayGame.Presentation.Gameplay
                 var renderer = go.AddComponent<SpriteRenderer>();
                 renderer.sprite = RuntimeSpriteLibrary.GetDiamond();
                 renderer.sortingOrder = 129;
-                renderer.color = new Color(0.98f, 0.86f, 0.22f, 0.95f);
+                renderer.color = Color.white;
                 _loadoutWeaponVisuals.Add(go.transform);
             }
 
@@ -838,7 +963,9 @@ namespace OneDayGame.Presentation.Gameplay
                     var renderer = visual.GetComponent<SpriteRenderer>();
                     if (renderer != null)
                     {
-                        renderer.color = GetWeaponTint(slot.Definition.Type);
+                        var icon = WeaponSpriteLibrary.GetWeaponIcon(slot.Definition.Id);
+                        renderer.sprite = icon ?? RuntimeSpriteLibrary.GetDiamond();
+                        renderer.color = icon == null ? GetWeaponTint(slot.Definition.Type) : Color.white;
                     }
 
                     visualIndex++;

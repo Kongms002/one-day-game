@@ -13,12 +13,15 @@ namespace OneDayGame.Presentation.Gameplay
         private bool _destroyOnComplete = true;
         private SpriteRenderer _renderer;
 
-        public void Initialize(float radius, Color color)
+        public void Initialize(float radius, Color color, Sprite overrideSprite)
         {
             EnsureRenderer();
             _elapsed = 0f;
             transform.localScale = new Vector3(radius * 2f, radius * 2f, 1f);
             _renderer.color = color;
+            _renderer.sprite = overrideSprite != null
+                ? overrideSprite
+                : RuntimeSpriteLibrary.GetCircle();
             gameObject.SetActive(true);
         }
 

@@ -324,8 +324,9 @@ namespace OneDayGame.Presentation.Ui
 
             if (_weaponIcon != null)
             {
-                _weaponIcon.sprite = RuntimeSpriteLibrary.GetDiamond();
-                _weaponIcon.color = new Color(1f, 0.9f, 0.25f, 1f);
+                var selectedWeaponIcon = selectedWeapon != null ? WeaponSpriteLibrary.GetWeaponIcon(selectedWeapon) : null;
+                _weaponIcon.sprite = selectedWeaponIcon ?? RuntimeSpriteLibrary.GetDiamond();
+                _weaponIcon.color = selectedWeaponIcon != null ? Color.white : new Color(1f, 0.9f, 0.25f, 1f);
                 _weaponIcon.preserveAspect = true;
             }
 
@@ -679,6 +680,24 @@ namespace OneDayGame.Presentation.Ui
                     && _weaponLoadout.SelectedSlot.Definition.Id == slot.Definition.Id;
                 image.color = selected ? new Color(0.22f, 0.33f, 0.5f, 0.9f) : new Color(0.12f, 0.14f, 0.2f, 0.75f);
 
+                var icon = item.transform.Find("WeaponSlotIcon");
+                if (icon == null)
+                {
+                    var iconGo = new GameObject("WeaponSlotIcon", typeof(RectTransform), typeof(Image));
+                    iconGo.transform.SetParent(item.transform, false);
+                    icon = iconGo.transform;
+                }
+
+                var iconImage = icon.GetComponent<Image>();
+                var iconRect = iconImage.rectTransform;
+                iconRect.anchorMin = new Vector2(0f, 0.5f);
+                iconRect.anchorMax = new Vector2(0f, 0.5f);
+                iconRect.sizeDelta = new Vector2(30f, 30f);
+                iconRect.anchoredPosition = new Vector2(17f, 0f);
+                iconImage.color = Color.white;
+                iconImage.preserveAspect = true;
+                iconImage.sprite = WeaponSpriteLibrary.GetWeaponIcon(slot.Definition) ?? RuntimeSpriteLibrary.GetDiamond();
+
                 var button = item.GetComponent<Button>();
                 button.targetGraphic = image;
                 WeaponId weaponId = slot.Definition.Id;
@@ -690,7 +709,7 @@ namespace OneDayGame.Presentation.Ui
                 var labelRect = labelGo.GetComponent<RectTransform>();
                 labelRect.anchorMin = Vector2.zero;
                 labelRect.anchorMax = Vector2.one;
-                labelRect.offsetMin = new Vector2(12f, 6f);
+                labelRect.offsetMin = new Vector2(44f, 6f);
                 labelRect.offsetMax = new Vector2(-10f, -6f);
 
                 var label = labelGo.GetComponent<Text>();

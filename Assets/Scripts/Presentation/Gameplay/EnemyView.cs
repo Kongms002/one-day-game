@@ -7,7 +7,6 @@ namespace OneDayGame.Presentation.Gameplay
         public sealed class EnemyView : MonoBehaviour
     {
         private static bool s_showHpBarInDev = true;
-        private const float MinKnockback = 0.5f;
         private const float MaxKnockback = 8f;
         private const float KnockbackDuration = 0.18f;
 
@@ -73,6 +72,10 @@ namespace OneDayGame.Presentation.Gameplay
         public EnemyArchetype Archetype => _archetype;
 
         public EnemyData Data => _data;
+
+        public float CurrentHp => _hp;
+
+        public float MaxHp => _maxHp;
 
         public void Initialize(EnemyData data, Transform target)
         {
@@ -290,7 +293,7 @@ namespace OneDayGame.Presentation.Gameplay
 
         public void ApplyKnockback(Vector3 sourcePosition, float force)
         {
-            if (_isDead || _rigidbody2D == null || !isActiveAndEnabled)
+            if (_isDead || _rigidbody2D == null || !isActiveAndEnabled || _data.IsBoss)
             {
                 return;
             }
@@ -301,7 +304,12 @@ namespace OneDayGame.Presentation.Gameplay
                 direction = Vector2.up;
             }
 
-            float clampedForce = Mathf.Clamp(force, MinKnockback, MaxKnockback);
+            float clampedForce = Mathf.Clamp(force, 0f, MaxKnockback);
+            if (clampedForce <= 0f)
+            {
+                return;
+            }
+
             _knockbackVelocity = direction.normalized * clampedForce;
             _knockbackTimeRemaining = KnockbackDuration;
         }

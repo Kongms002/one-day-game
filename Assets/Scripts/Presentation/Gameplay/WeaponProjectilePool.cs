@@ -17,7 +17,8 @@ namespace OneDayGame.Presentation.Gameplay
             float hitRadius,
             float knockbackForce,
             int enemyMask,
-            Color tint)
+            Color tint,
+            Sprite sprite)
         {
             EnsureRoot();
 
@@ -39,7 +40,7 @@ namespace OneDayGame.Presentation.Gameplay
             projectile.transform.rotation = Quaternion.identity;
             projectile.Completed -= OnProjectileCompleted;
             projectile.Completed += OnProjectileCompleted;
-            projectile.Initialize(target, damage, speed, lifeTime, hitRadius, knockbackForce, enemyMask, tint);
+            projectile.Initialize(target, damage, speed, lifeTime, hitRadius, knockbackForce, enemyMask, tint, sprite);
         }
 
         private static void OnProjectileCompleted(WeaponProjectileView projectile)

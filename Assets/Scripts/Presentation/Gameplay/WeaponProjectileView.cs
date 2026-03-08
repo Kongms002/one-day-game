@@ -26,14 +26,15 @@ namespace OneDayGame.Presentation.Gameplay
             float hitRadius,
             float knockbackForce,
             int enemyMask,
-            Color tint)
+            Color tint,
+            Sprite overrideSprite)
         {
             _target = target;
             _damage = Mathf.Max(0.1f, damage);
             _speed = Mathf.Max(1f, speed);
             _lifeTime = Mathf.Max(0.1f, lifeTime);
             _hitRadius = Mathf.Clamp(hitRadius, 0.08f, 0.6f);
-            _knockbackForce = Mathf.Max(0.1f, knockbackForce);
+            _knockbackForce = Mathf.Max(0f, knockbackForce);
             _enemyMask = enemyMask == 0 ? Physics2D.AllLayers : enemyMask;
             _elapsed = 0f;
             _resolved = false;
@@ -41,7 +42,7 @@ namespace OneDayGame.Presentation.Gameplay
                 ? (target.transform.position - transform.position).normalized
                 : Vector3.up;
 
-            EnsureRenderer(tint);
+            EnsureRenderer(tint, overrideSprite);
             gameObject.SetActive(true);
         }
 
@@ -95,7 +96,11 @@ namespace OneDayGame.Presentation.Gameplay
 
             _resolved = true;
             enemy.ApplyDamage(_damage);
-            enemy.ApplyKnockback(transform.position, _knockbackForce);
+            if (_knockbackForce > 0.0001f)
+            {
+                enemy.ApplyKnockback(transform.position, _knockbackForce);
+            }
+
             Complete();
         }
 
@@ -112,7 +117,7 @@ namespace OneDayGame.Presentation.Gameplay
             }
         }
 
-        private void EnsureRenderer(Color tint)
+        private void EnsureRenderer(Color tint, Sprite overrideSprite)
         {
             var renderer = GetComponent<SpriteRenderer>();
             if (renderer == null)
@@ -120,7 +125,9 @@ namespace OneDayGame.Presentation.Gameplay
                 renderer = gameObject.AddComponent<SpriteRenderer>();
             }
 
-            renderer.sprite = RuntimeSpriteLibrary.GetDiamond();
+            renderer.sprite = overrideSprite != null
+                ? overrideSprite
+                : RuntimeSpriteLibrary.GetDiamond();
             renderer.color = tint;
             renderer.sortingOrder = 132;
             transform.localScale = new Vector3(0.24f, 0.24f, 1f);

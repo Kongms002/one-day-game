@@ -48,11 +48,102 @@ namespace OneDayGame.Presentation.Gameplay
         private readonly List<Sprite> _sheetSprites = new List<Sprite>();
         private readonly HashSet<long> _blockedCells = new HashSet<long>();
         private Vector2 _tileStep = Vector2.one;
+        private bool _hasGeneratedCells;
+        private int _xMinCell;
+        private int _xMaxCell;
+        private int _yMinCell;
+        private int _yMaxCell;
 
         public void Initialize(IMapPolicy mapPolicy)
         {
             _mapPolicy = mapPolicy;
             EnsureRoots();
+        }
+
+        public Vector2 GetTileStep()
+        {
+            if (_tileStep.x <= 0f || _tileStep.y <= 0f)
+            {
+                return Vector2.one;
+            }
+
+            return _tileStep;
+        }
+
+        public Vector2 SnapToTileCenter(Vector2 worldPosition)
+        {
+            var tileStep = GetTileStep();
+            float x = Mathf.Round(worldPosition.x / tileStep.x) * tileStep.x;
+            float y = Mathf.Round(worldPosition.y / tileStep.y) * tileStep.y;
+            return new Vector2(x, y);
+        }
+
+        public Vector2 GetPlayableCenter()
+        {
+            if (_mapPolicy == null)
+            {
+                return Vector2.zero;
+            }
+
+            float centerX = (_mapPolicy.PlayerMinX + _mapPolicy.PlayerMaxX) * 0.5f;
+            float centerY = (_mapPolicy.PlayerMinY + _mapPolicy.PlayerMaxY) * 0.5f;
+            var center = SnapToTileCenter(new Vector2(centerX, centerY));
+            if (IsWalkable(center))
+            {
+                return center;
+            }
+
+            int centerCellX = Mathf.RoundToInt(center.x / Mathf.Max(0.05f, _tileStep.x));
+            int centerCellY = Mathf.RoundToInt(center.y / Mathf.Max(0.05f, _tileStep.y));
+            for (int radius = 1; radius <= 24; radius++)
+            {
+                for (int y = -radius; y <= radius; y++)
+                {
+                    for (int x = -radius; x <= radius; x++)
+                    {
+                        if (Mathf.Abs(x) != radius && Mathf.Abs(y) != radius)
+                        {
+                            continue;
+                        }
+
+                        int cellX = centerCellX + x;
+                        int cellY = centerCellY + y;
+                        if (cellX < _xMinCell || cellX > _xMaxCell || cellY < _yMinCell || cellY > _yMaxCell)
+                        {
+                            continue;
+                        }
+
+                        if (_blockedCells.Contains(ToCellKey(cellX, cellY)))
+                        {
+                            continue;
+                        }
+
+                        return new Vector2(cellX * _tileStep.x, cellY * _tileStep.y);
+                    }
+                }
+            }
+
+            return center;
+        }
+
+        public bool TryGetWorldBounds(out float minX, out float maxX, out float minY, out float maxY)
+        {
+            if (_mapPolicy == null || !_hasGeneratedCells)
+            {
+                minX = 0f;
+                maxX = 0f;
+                minY = 0f;
+                maxY = 0f;
+                return false;
+            }
+
+            float stepX = Mathf.Max(0.05f, _tileStep.x);
+            float stepY = Mathf.Max(0.05f, _tileStep.y);
+            minX = _xMinCell * stepX;
+            maxX = _xMaxCell * stepX;
+            minY = _yMinCell * stepY;
+            maxY = _yMaxCell * stepY;
+            return true;
         }
 
         public void ApplyForStage(int stage)
@@ -85,6 +176,7 @@ namespace OneDayGame.Presentation.Gameplay
             ClearRoot(_tileRoot);
             ClearRoot(_propRoot);
             _blockedCells.Clear();
+            _hasGeneratedCells = false;
             BuildSheetSprites();
 
             int seed = _baseSeed + (round * 9973);
@@ -97,18 +189,41 @@ namespace OneDayGame.Presentation.Gameplay
             GetPalette(round, out floorA, out floorB, out propA, out propB);
 
             float tileSize = Mathf.Max(0.4f, _tileSize);
-            float tileStepX = _terrainTileSheet != null ? Mathf.Max(0.05f, _tileRenderWidthPixels / Mathf.Max(1f, _pixelsPerUnit)) : tileSize;
-            float tileStepY = _terrainTileSheet != null ? Mathf.Max(0.05f, _tileRenderHeightPixels / Mathf.Max(1f, _pixelsPerUnit)) : tileSize;
+            float tileStepX = tileSize;
+            float tileStepY = tileSize;
+            if (_terrainTileSheet != null)
+            {
+                int cols = Mathf.Max(1, _sheetColumns);
+                int rows = Mathf.Max(1, _sheetRows);
+                int tileW = _terrainTileSheet.width / cols;
+                int tileH = _terrainTileSheet.height / rows;
+                if (tileW > 0 && tileH > 0)
+                {
+                    tileStepX = Mathf.Max(0.05f, tileW / Mathf.Max(1f, _pixelsPerUnit));
+                    tileStepY = Mathf.Max(0.05f, tileH / Mathf.Max(1f, _pixelsPerUnit));
+                }
+                else
+                {
+                    tileStepX = Mathf.Max(0.05f, _tileRenderWidthPixels / Mathf.Max(1f, _pixelsPerUnit));
+                    tileStepY = Mathf.Max(0.05f, _tileRenderHeightPixels / Mathf.Max(1f, _pixelsPerUnit));
+                }
+            }
+
             _tileStep = new Vector2(tileStepX, tileStepY);
-            float minX = _mapPolicy.PlayerMinX - 3f;
-            float maxX = _mapPolicy.PlayerMaxX + 3f;
-            float minY = _mapPolicy.PlayerMinY - 2f;
-            float maxY = _mapPolicy.PlayerMaxY + 3f;
+            float minX = _mapPolicy.PlayerMinX;
+            float maxX = _mapPolicy.PlayerMaxX;
+            float minY = _mapPolicy.PlayerMinY;
+            float maxY = _mapPolicy.PlayerMaxY;
 
             int xMin = Mathf.FloorToInt(minX / tileStepX);
             int xMax = Mathf.CeilToInt(maxX / tileStepX);
             int yMin = Mathf.FloorToInt(minY / tileStepY);
             int yMax = Mathf.CeilToInt(maxY / tileStepY);
+            _xMinCell = xMin;
+            _xMaxCell = xMax;
+            _yMinCell = yMin;
+            _yMaxCell = yMax;
+            _hasGeneratedCells = true;
             int centerX = Mathf.RoundToInt(((_mapPolicy.PlayerMinX + _mapPolicy.PlayerMaxX) * 0.5f) / tileStepX);
             int centerY = Mathf.RoundToInt(((_mapPolicy.PlayerMinY + _mapPolicy.PlayerMaxY) * 0.5f) / tileStepY);
             const int safeSpawnRadius = 2;
@@ -177,8 +292,13 @@ namespace OneDayGame.Presentation.Gameplay
 
         public bool IsWalkable(Vector2 worldPosition)
         {
-            int x = Mathf.FloorToInt(worldPosition.x / Mathf.Max(0.05f, _tileStep.x));
-            int y = Mathf.FloorToInt(worldPosition.y / Mathf.Max(0.05f, _tileStep.y));
+            int x = Mathf.RoundToInt(worldPosition.x / Mathf.Max(0.05f, _tileStep.x));
+            int y = Mathf.RoundToInt(worldPosition.y / Mathf.Max(0.05f, _tileStep.y));
+            if (x < _xMinCell || x > _xMaxCell || y < _yMinCell || y > _yMaxCell)
+            {
+                return false;
+            }
+
             return !_blockedCells.Contains(ToCellKey(x, y));
         }
 

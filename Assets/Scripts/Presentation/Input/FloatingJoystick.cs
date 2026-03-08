@@ -62,6 +62,7 @@ namespace OneDayGame.Presentation.Input
         }
 
         public InputAxis Direction => new InputAxis(_direction.x, _direction.y);
+        public bool IsTouching => _isDragging;
 
         public void Configure(RectTransform background, RectTransform handle, bool floatingMode)
         {
@@ -81,7 +82,7 @@ namespace OneDayGame.Presentation.Input
                 _origin = Vector2.zero;
                 if (_handle != null)
                 {
-                    _handle.anchoredPosition = Vector2.zero;
+                    _handle.position = _background.position;
                 }
             }
 
@@ -105,7 +106,9 @@ namespace OneDayGame.Presentation.Input
 
             if (_handle != null)
             {
-                _handle.anchoredPosition = Vector2.zero;
+                _handle.position = _background != null
+                    ? _background.position
+                    : _rectTransform.position;
             }
 
             if (_floatingMode && _background != null)
@@ -126,7 +129,14 @@ namespace OneDayGame.Presentation.Input
 
             if (_handle != null)
             {
-                _handle.anchoredPosition = delta;
+                if (_background != null)
+                {
+                    _handle.position = _background.TransformPoint(delta);
+                }
+                else
+                {
+                    _handle.anchoredPosition = delta;
+                }
             }
         }
 
@@ -137,7 +147,9 @@ namespace OneDayGame.Presentation.Input
 
             if (_handle != null)
             {
-                _handle.anchoredPosition = Vector2.zero;
+                _handle.position = _background != null
+                    ? _background.position
+                    : _rectTransform.position;
             }
 
             if (_floatingMode && _background != null)

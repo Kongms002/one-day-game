@@ -8,7 +8,7 @@ namespace OneDayGame.Presentation.Gameplay
         private static readonly Queue<WeaponAreaEffectView> Pool = new Queue<WeaponAreaEffectView>();
         private static Transform s_root;
 
-        public static void Spawn(Vector3 position, float radius, Color color)
+        public static void Spawn(Vector3 position, float radius, Color color, Sprite sprite)
         {
             EnsureRoot();
             WeaponAreaEffectView effect = null;
@@ -28,7 +28,7 @@ namespace OneDayGame.Presentation.Gameplay
             effect.transform.position = position;
             effect.Completed -= OnCompleted;
             effect.Completed += OnCompleted;
-            effect.Initialize(radius, color);
+            effect.Initialize(radius, color, sprite);
         }
 
         private static void OnCompleted(WeaponAreaEffectView effect)
