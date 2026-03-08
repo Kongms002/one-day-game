@@ -11,5 +11,11 @@ namespace OneDayGame.Domain.Policies
         float GetMedKitHealAmount(int stage);
 
         int GetMedKitScore(int stage);
+
+        float GetMagnetSpawnChance(int stage);
+
+        float GetMagnetDuration(int stage);
+
+        float GetMagnetRadius(int stage);
     }
 }

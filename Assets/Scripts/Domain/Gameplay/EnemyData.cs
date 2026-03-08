@@ -12,13 +12,19 @@ namespace OneDayGame.Domain.Gameplay
 
         public float ContactRadius { get; }
 
-        public EnemyData(float maxHp, float moveSpeed, float contactDamage, int scoreValue, float contactRadius)
+        public EnemyArchetype Archetype { get; }
+
+        public bool IsBoss { get; }
+
+        public EnemyData(float maxHp, float moveSpeed, float contactDamage, int scoreValue, float contactRadius, EnemyArchetype archetype, bool isBoss = false)
         {
             MaxHp = maxHp;
             MoveSpeed = moveSpeed;
             ContactDamage = contactDamage;
             ScoreValue = scoreValue;
             ContactRadius = contactRadius;
+            Archetype = archetype;
+            IsBoss = isBoss;
         }
     }
 }
