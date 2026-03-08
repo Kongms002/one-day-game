@@ -7,12 +7,13 @@ namespace OneDayGame.Presentation.Gameplay
     public sealed class ExpOrbView : MonoBehaviour
     {
         public event Action<ExpOrbView, int> Collected;
+        public event Action<ExpOrbView> Released;
 
         [SerializeField]
         private float _lifeTime = 10f;
 
         [SerializeField]
-        private float _magnetRadius = 2.2f;
+        private float _magnetRadius = 0f;
 
         [SerializeField]
         private float _moveSpeed = 5.8f;
@@ -22,11 +23,16 @@ namespace OneDayGame.Presentation.Gameplay
         private float _elapsed;
         private bool _collected;
         private CircleCollider2D _trigger;
+        private PlayerView _player;
+        private Collider2D _playerBodyCollider;
+        private bool _destroyOnCollected = true;
 
         public void Initialize(int expValue, Transform target)
         {
             _expValue = Mathf.Max(1, expValue);
             _target = target;
+            _player = target != null ? target.GetComponent<PlayerView>() : null;
+            _playerBodyCollider = _player != null ? _player.GetComponent<Collider2D>() : null;
             _elapsed = 0f;
             _collected = false;
 
@@ -41,6 +47,11 @@ namespace OneDayGame.Presentation.Gameplay
             gameObject.SetActive(true);
         }
 
+        public void SetDestroyOnCollected(bool destroyOnCollected)
+        {
+            _destroyOnCollected = destroyOnCollected;
+        }
+
         private void Update()
         {
             if (_collected)
@@ -51,7 +62,15 @@ namespace OneDayGame.Presentation.Gameplay
             _elapsed += Time.deltaTime;
             if (_elapsed >= _lifeTime)
             {
-                Destroy(gameObject);
+                Released?.Invoke(this);
+                if (_destroyOnCollected)
+                {
+                    Destroy(gameObject);
+                }
+                else
+                {
+                    gameObject.SetActive(false);
+                }
                 return;
             }
 
@@ -60,8 +79,14 @@ namespace OneDayGame.Presentation.Gameplay
                 return;
             }
 
+            float effectiveMagnetRadius = _magnetRadius;
+            if (_player != null && _player.IsExpMagnetActive)
+            {
+                effectiveMagnetRadius = Mathf.Max(effectiveMagnetRadius, _player.ExpMagnetRadius);
+            }
+
             var delta = _target.position - transform.position;
-            if (delta.sqrMagnitude <= _magnetRadius * _magnetRadius)
+            if (effectiveMagnetRadius > 0.01f && delta.sqrMagnitude <= effectiveMagnetRadius * effectiveMagnetRadius)
             {
                 transform.position = Vector3.MoveTowards(transform.position, _target.position, _moveSpeed * Time.deltaTime);
             }
@@ -74,14 +99,37 @@ namespace OneDayGame.Presentation.Gameplay
                 return;
             }
 
-            if (other.transform != _target && !other.transform.IsChildOf(_target))
+            if (_player == null)
             {
                 return;
             }
 
+            if (_playerBodyCollider != null)
+            {
+                if (other != _playerBodyCollider)
+                {
+                    return;
+                }
+            }
+            else
+            {
+                var otherPlayer = other.GetComponentInParent<PlayerView>();
+                if (otherPlayer != _player)
+                {
+                    return;
+                }
+            }
+
             _collected = true;
             Collected?.Invoke(this, _expValue);
-            Destroy(gameObject);
+            if (_destroyOnCollected)
+            {
+                Destroy(gameObject);
+            }
+            else
+            {
+                gameObject.SetActive(false);
+            }
         }
 
         private void EnsureVisibleSprite()

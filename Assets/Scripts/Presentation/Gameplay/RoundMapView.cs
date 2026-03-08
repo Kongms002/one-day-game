@@ -1,4 +1,5 @@
 using OneDayGame.Domain.Policies;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace OneDayGame.Presentation.Gameplay
@@ -14,6 +15,27 @@ namespace OneDayGame.Presentation.Gameplay
         private float _tileSize = 1f;
 
         [SerializeField]
+        private Texture2D _terrainTileSheet;
+
+        [SerializeField]
+        private int _sheetColumns = 2;
+
+        [SerializeField]
+        private int _sheetRows = 3;
+
+        [SerializeField]
+        private int _blockedTileIndex = 5;
+
+        [SerializeField]
+        private int _tileRenderWidthPixels = 30;
+
+        [SerializeField]
+        private int _tileRenderHeightPixels = 50;
+
+        [SerializeField]
+        private float _pixelsPerUnit = 100f;
+
+        [SerializeField]
         private int _propCountMin = 14;
 
         [SerializeField]
@@ -23,6 +45,9 @@ namespace OneDayGame.Presentation.Gameplay
         private Transform _tileRoot;
         private Transform _propRoot;
         private int _appliedRound = -1;
+        private readonly List<Sprite> _sheetSprites = new List<Sprite>();
+        private readonly HashSet<long> _blockedCells = new HashSet<long>();
+        private Vector2 _tileStep = Vector2.one;
 
         public void Initialize(IMapPolicy mapPolicy)
         {
@@ -59,6 +84,8 @@ namespace OneDayGame.Presentation.Gameplay
             EnsureRoots();
             ClearRoot(_tileRoot);
             ClearRoot(_propRoot);
+            _blockedCells.Clear();
+            BuildSheetSprites();
 
             int seed = _baseSeed + (round * 9973);
             var random = new System.Random(seed);
@@ -70,15 +97,21 @@ namespace OneDayGame.Presentation.Gameplay
             GetPalette(round, out floorA, out floorB, out propA, out propB);
 
             float tileSize = Mathf.Max(0.4f, _tileSize);
+            float tileStepX = _terrainTileSheet != null ? Mathf.Max(0.05f, _tileRenderWidthPixels / Mathf.Max(1f, _pixelsPerUnit)) : tileSize;
+            float tileStepY = _terrainTileSheet != null ? Mathf.Max(0.05f, _tileRenderHeightPixels / Mathf.Max(1f, _pixelsPerUnit)) : tileSize;
+            _tileStep = new Vector2(tileStepX, tileStepY);
             float minX = _mapPolicy.PlayerMinX - 3f;
             float maxX = _mapPolicy.PlayerMaxX + 3f;
             float minY = _mapPolicy.PlayerMinY - 2f;
             float maxY = _mapPolicy.PlayerMaxY + 3f;
 
-            int xMin = Mathf.FloorToInt(minX / tileSize);
-            int xMax = Mathf.CeilToInt(maxX / tileSize);
-            int yMin = Mathf.FloorToInt(minY / tileSize);
-            int yMax = Mathf.CeilToInt(maxY / tileSize);
+            int xMin = Mathf.FloorToInt(minX / tileStepX);
+            int xMax = Mathf.CeilToInt(maxX / tileStepX);
+            int yMin = Mathf.FloorToInt(minY / tileStepY);
+            int yMax = Mathf.CeilToInt(maxY / tileStepY);
+            int centerX = Mathf.RoundToInt(((_mapPolicy.PlayerMinX + _mapPolicy.PlayerMaxX) * 0.5f) / tileStepX);
+            int centerY = Mathf.RoundToInt(((_mapPolicy.PlayerMinY + _mapPolicy.PlayerMaxY) * 0.5f) / tileStepY);
+            const int safeSpawnRadius = 2;
 
             var tileSprite = RuntimeSpriteLibrary.GetSquare();
             for (int y = yMin; y <= yMax; y++)
@@ -87,13 +120,34 @@ namespace OneDayGame.Presentation.Gameplay
                 {
                     var tile = new GameObject($"Tile_{x}_{y}");
                     tile.transform.SetParent(_tileRoot, false);
-                    tile.transform.position = new Vector3(x * tileSize, y * tileSize, 8f);
+                    tile.transform.position = new Vector3(x * tileStepX, y * tileStepY, 8f);
 
                     var renderer = tile.AddComponent<SpriteRenderer>();
-                    renderer.sprite = tileSprite;
+                    int tileIndex = _sheetSprites.Count > 0 ? random.Next(0, _sheetSprites.Count) : 0;
+                    bool inSafeSpawnZone = Mathf.Abs(x - centerX) <= safeSpawnRadius && Mathf.Abs(y - centerY) <= safeSpawnRadius;
+                    if (inSafeSpawnZone && tileIndex == _blockedTileIndex)
+                    {
+                        tileIndex = 0;
+                    }
+
+                    if (_sheetSprites.Count > 0)
+                    {
+                        renderer.sprite = _sheetSprites[tileIndex];
+                        renderer.color = Color.white;
+                        tile.transform.localScale = Vector3.one;
+                    }
+                    else
+                    {
+                        renderer.sprite = tileSprite;
+                        renderer.color = ((x + y + round) & 1) == 0 ? floorA : floorB;
+                        tile.transform.localScale = new Vector3(tileSize, tileSize, 1f);
+                    }
+
                     renderer.sortingOrder = -300;
-                    renderer.color = ((x + y + round) & 1) == 0 ? floorA : floorB;
-                    tile.transform.localScale = new Vector3(tileSize, tileSize, 1f);
+                    if (!inSafeSpawnZone && tileIndex == _blockedTileIndex)
+                    {
+                        _blockedCells.Add(ToCellKey(x, y));
+                    }
                 }
             }
 
@@ -119,6 +173,51 @@ namespace OneDayGame.Presentation.Gameplay
                 float sy = Mathf.Lerp(0.35f, 1.2f, (float)random.NextDouble());
                 prop.transform.localScale = new Vector3(sx, sy, 1f);
             }
+        }
+
+        public bool IsWalkable(Vector2 worldPosition)
+        {
+            int x = Mathf.FloorToInt(worldPosition.x / Mathf.Max(0.05f, _tileStep.x));
+            int y = Mathf.FloorToInt(worldPosition.y / Mathf.Max(0.05f, _tileStep.y));
+            return !_blockedCells.Contains(ToCellKey(x, y));
+        }
+
+        private void BuildSheetSprites()
+        {
+            _sheetSprites.Clear();
+            if (_terrainTileSheet == null)
+            {
+                return;
+            }
+
+            int cols = Mathf.Max(1, _sheetColumns);
+            int rows = Mathf.Max(1, _sheetRows);
+            int tileW = _terrainTileSheet.width / cols;
+            int tileH = _terrainTileSheet.height / rows;
+            if (tileW <= 0 || tileH <= 0)
+            {
+                return;
+            }
+
+            for (int row = 0; row < rows; row++)
+            {
+                for (int col = 0; col < cols; col++)
+                {
+                    int x = col * tileW;
+                    int y = _terrainTileSheet.height - ((row + 1) * tileH);
+                    var sprite = Sprite.Create(
+                        _terrainTileSheet,
+                        new Rect(x, y, tileW, tileH),
+                        new Vector2(0.5f, 0.5f),
+                        Mathf.Max(1f, _pixelsPerUnit));
+                    _sheetSprites.Add(sprite);
+                }
+            }
+        }
+
+        private static long ToCellKey(int x, int y)
+        {
+            return ((long) x << 32) ^ (uint) y;
         }
 
         private void EnsureRoots()

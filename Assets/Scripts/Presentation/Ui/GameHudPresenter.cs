@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using OneDayGame.Domain;
 using OneDayGame.Domain.Gameplay;
 using OneDayGame.Domain.Policies;
+using OneDayGame.Domain.Weapons;
 using OneDayGame.Presentation.Gameplay;
 using UnityEngine;
 using UnityEngine.UI;
@@ -91,10 +93,31 @@ namespace OneDayGame.Presentation.Ui
         [SerializeField]
         private Text _upgradeButtonCText;
 
+        [SerializeField]
+        private GameObject _resultPanel;
+
+        [SerializeField]
+        private Text _resultDamageText;
+
+        [SerializeField]
+        private Text _resultTimeText;
+
+        [SerializeField]
+        private Text _resultKillsText;
+
+        [SerializeField]
+        private Button _restartButton;
+
         private IRunState _runState;
         private IWeaponPolicy _weaponPolicy;
+        private IWeaponLoadoutReadModel _weaponLoadout;
         private bool _weaponDetailVisible;
         private Action<int> _onUpgradeSelected;
+        private RectTransform _weaponListRoot;
+        private readonly List<Button> _weaponSlotButtons = new List<Button>();
+        private bool _isDestroying;
+
+        public event Action RestartRequested;
 
         public void Bind(IRunState runState)
         {
@@ -125,8 +148,10 @@ namespace OneDayGame.Presentation.Ui
             EnsureRuntimeLayout();
             SetupWeaponButton();
             SetupWeaponDetailConfirmButton();
+            SetupRestartButton();
             RefreshWeaponUi();
             HideLevelUpChoices();
+            HideRunResult();
         }
 
         public void BindWeapon(IWeaponPolicy weaponPolicy)
@@ -136,8 +161,28 @@ namespace OneDayGame.Presentation.Ui
             RefreshWeaponUi();
         }
 
+        public void BindWeaponLoadout(IWeaponLoadoutReadModel weaponLoadout)
+        {
+            if (_weaponLoadout != null)
+            {
+                _weaponLoadout.Changed -= OnWeaponLoadoutChanged;
+            }
+
+            _weaponLoadout = weaponLoadout;
+            if (_weaponLoadout != null)
+            {
+                _weaponLoadout.Changed += OnWeaponLoadoutChanged;
+            }
+
+            EnsureWeaponListRoot();
+            RebuildWeaponSlotButtons();
+            RefreshWeaponUi();
+        }
+
         private void OnDestroy()
         {
+            _isDestroying = true;
+
             if (_weaponButton != null)
             {
                 _weaponButton.onClick.RemoveListener(ToggleWeaponDetail);
@@ -148,7 +193,25 @@ namespace OneDayGame.Presentation.Ui
                 _weaponDetailConfirmButton.onClick.RemoveListener(CloseWeaponDetail);
             }
 
-            Bind(null);
+            if (_restartButton != null)
+            {
+                _restartButton.onClick.RemoveListener(OnRestartClicked);
+            }
+
+            if (_weaponLoadout != null)
+            {
+                _weaponLoadout.Changed -= OnWeaponLoadoutChanged;
+            }
+
+            if (_runState != null)
+            {
+                _runState.SnapshotChanged -= OnSnapshotChanged;
+                _runState.RunEnded -= OnRunEnded;
+                _runState.Restarted -= OnRunRestarted;
+                _runState.DeadStateChanged -= OnDeadStateChanged;
+                _runState = null;
+            }
+
             UnregisterUpgradeButtons();
         }
 
@@ -170,7 +233,7 @@ namespace OneDayGame.Presentation.Ui
 
             if (_hpText != null)
             {
-                _hpText.text = $"HP: {(int) snapshot.Hp}/{(int) snapshot.MaxHp}";
+                _hpText.text = $"HP {(int) snapshot.Hp}/{(int) snapshot.MaxHp}";
             }
 
             if (_ultimateText != null)
@@ -180,12 +243,12 @@ namespace OneDayGame.Presentation.Ui
 
             if (_expText != null)
             {
-                _expText.text = $"EXP: {snapshot.Experience}";
+                _expText.text = $"EXP {snapshot.ExpInLevel}/{snapshot.ExpToNextLevel}";
             }
 
             if (_levelText != null)
             {
-                _levelText.text = $"LV: {snapshot.Level}";
+                _levelText.text = $"Lv.{snapshot.Level}";
             }
 
             if (_expBarFill != null)
@@ -216,8 +279,10 @@ namespace OneDayGame.Presentation.Ui
         {
             if (_statusText != null)
             {
-                _statusText.text = "DEAD - restarting...";
+                _statusText.text = "";
             }
+
+            ShowRunResult(snapshot);
         }
 
         private void OnRunRestarted(RunSnapshot snapshot)
@@ -227,6 +292,7 @@ namespace OneDayGame.Presentation.Ui
                 _statusText.text = "";
             }
 
+            HideRunResult();
             OnSnapshotChanged(snapshot);
         }
 
@@ -246,12 +312,14 @@ namespace OneDayGame.Presentation.Ui
         private void RefreshWeaponUi()
         {
             SetupWeaponButton();
+            EnsureWeaponListRoot();
 
             int stage = _runState != null ? _runState.Stage : 1;
+            var selectedWeapon = _weaponLoadout != null ? _weaponLoadout.GetSelectedWeapon() : null;
+            var selectedStats = _weaponLoadout != null ? _weaponLoadout.GetSelectedStats(stage) : default;
             if (_weaponText != null)
             {
-                string weaponName = _weaponPolicy != null ? _weaponPolicy.GetWeaponDisplayName(stage) : "Unknown";
-                _weaponText.text = $"Weapon: {weaponName}";
+                _weaponText.text = "Weapons";
             }
 
             if (_weaponIcon != null)
@@ -263,12 +331,21 @@ namespace OneDayGame.Presentation.Ui
 
             if (_weaponDetailTitle != null)
             {
-                _weaponDetailTitle.text = _weaponPolicy != null ? _weaponPolicy.GetWeaponDisplayName(stage) : "Unknown Weapon";
+                _weaponDetailTitle.text = selectedWeapon != null
+                    ? selectedWeapon.DisplayName
+                    : (_weaponPolicy != null ? _weaponPolicy.GetWeaponDisplayName(stage) : "Unknown Weapon");
             }
 
             if (_weaponDetailStats != null)
             {
-                if (_weaponPolicy == null)
+                if (selectedWeapon != null)
+                {
+                    _weaponDetailStats.text =
+                        $"Damage {selectedStats.Damage:F1} | Delay {selectedStats.Cooldown:F2}s\n" +
+                        $"Projectiles {selectedStats.ProjectileCount} | Range {selectedStats.Range:F2}\n" +
+                        $"DOT {selectedStats.DotPerSecond:F1}/s | Type {selectedWeapon.Type}";
+                }
+                else if (_weaponPolicy == null)
                 {
                     _weaponDetailStats.text = "No weapon data";
                 }
@@ -287,7 +364,11 @@ namespace OneDayGame.Presentation.Ui
 
             if (_weaponDetailDescription != null)
             {
-                if (_weaponPolicy == null)
+                if (selectedWeapon != null)
+                {
+                    _weaponDetailDescription.text = selectedWeapon.Description;
+                }
+                else if (_weaponPolicy == null)
                 {
                     _weaponDetailDescription.text = "No description";
                 }
@@ -298,6 +379,12 @@ namespace OneDayGame.Presentation.Ui
             }
 
             ApplyWeaponDetailVisibility();
+        }
+
+        private void OnWeaponLoadoutChanged()
+        {
+            RebuildWeaponSlotButtons();
+            RefreshWeaponUi();
         }
 
         private void SetupWeaponButton()
@@ -340,6 +427,22 @@ namespace OneDayGame.Presentation.Ui
             _weaponDetailConfirmButton.onClick.AddListener(CloseWeaponDetail);
         }
 
+        private void SetupRestartButton()
+        {
+            if (_restartButton == null)
+            {
+                return;
+            }
+
+            _restartButton.onClick.RemoveListener(OnRestartClicked);
+            _restartButton.onClick.AddListener(OnRestartClicked);
+        }
+
+        private void OnRestartClicked()
+        {
+            RestartRequested?.Invoke();
+        }
+
         private void ToggleWeaponDetail()
         {
             _weaponDetailVisible = !_weaponDetailVisible;
@@ -357,6 +460,39 @@ namespace OneDayGame.Presentation.Ui
             if (_weaponDetailPanel != null)
             {
                 _weaponDetailPanel.SetActive(_weaponDetailVisible);
+            }
+        }
+
+        private void ShowRunResult(RunSnapshot snapshot)
+        {
+            if (_resultPanel == null || _runState == null)
+            {
+                return;
+            }
+
+            if (_resultDamageText != null)
+            {
+                _resultDamageText.text = $"Damage Taken: {_runState.TotalDamageTaken:F0}";
+            }
+
+            if (_resultTimeText != null)
+            {
+                _resultTimeText.text = $"Survival Time: {snapshot.ElapsedTime:F1}s";
+            }
+
+            if (_resultKillsText != null)
+            {
+                _resultKillsText.text = $"Kills: {_runState.TotalKills}";
+            }
+
+            _resultPanel.SetActive(true);
+        }
+
+        public void HideRunResult()
+        {
+            if (_resultPanel != null)
+            {
+                _resultPanel.SetActive(false);
             }
         }
 
@@ -456,11 +592,137 @@ namespace OneDayGame.Presentation.Ui
             handler?.Invoke(index);
         }
 
+        private void EnsureWeaponListRoot()
+        {
+            if (_isDestroying)
+            {
+                return;
+            }
+
+            if (_weaponListRoot != null)
+            {
+                return;
+            }
+
+            Transform parent = _weaponText != null ? _weaponText.transform.parent : transform;
+            if (parent == null || !parent.gameObject.scene.IsValid())
+            {
+                return;
+            }
+
+            var existing = parent.Find("WeaponSlotList");
+            if (existing == null)
+            {
+                var go = new GameObject("WeaponSlotList", typeof(RectTransform));
+                go.transform.SetParent(parent, false);
+                existing = go.transform;
+            }
+
+            _weaponListRoot = existing as RectTransform;
+            if (_weaponListRoot == null)
+            {
+                _weaponListRoot = existing.gameObject.AddComponent<RectTransform>();
+            }
+
+            _weaponListRoot.anchorMin = new Vector2(0f, 1f);
+            _weaponListRoot.anchorMax = new Vector2(0f, 1f);
+            _weaponListRoot.pivot = new Vector2(0f, 1f);
+            _weaponListRoot.anchoredPosition = new Vector2(16f, -284f);
+            _weaponListRoot.sizeDelta = new Vector2(360f, 220f);
+        }
+
+        private void RebuildWeaponSlotButtons()
+        {
+            if (_weaponListRoot == null)
+            {
+                return;
+            }
+
+            for (int i = _weaponListRoot.childCount - 1; i >= 0; i--)
+            {
+                var child = _weaponListRoot.GetChild(i);
+                if (child != null)
+                {
+                    Destroy(child.gameObject);
+                }
+            }
+
+            _weaponSlotButtons.Clear();
+
+            if (_weaponLoadout == null || _weaponLoadout.Slots == null)
+            {
+                return;
+            }
+
+            var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            for (int i = 0; i < _weaponLoadout.Slots.Count; i++)
+            {
+                var slot = _weaponLoadout.Slots[i];
+                if (slot == null || slot.IsLocked || slot.IsEmpty)
+                {
+                    continue;
+                }
+
+                var item = new GameObject($"WeaponSlot_{i}", typeof(RectTransform), typeof(Image), typeof(Button));
+                item.transform.SetParent(_weaponListRoot, false);
+
+                var itemRect = item.GetComponent<RectTransform>();
+                itemRect.anchorMin = new Vector2(0f, 1f);
+                itemRect.anchorMax = new Vector2(0f, 1f);
+                itemRect.pivot = new Vector2(0f, 1f);
+                itemRect.anchoredPosition = new Vector2(0f, -i * 52f);
+                itemRect.sizeDelta = new Vector2(320f, 44f);
+
+                var image = item.GetComponent<Image>();
+                bool selected = _weaponLoadout.SelectedSlot != null
+                    && _weaponLoadout.SelectedSlot.Definition != null
+                    && _weaponLoadout.SelectedSlot.Definition.Id == slot.Definition.Id;
+                image.color = selected ? new Color(0.22f, 0.33f, 0.5f, 0.9f) : new Color(0.12f, 0.14f, 0.2f, 0.75f);
+
+                var button = item.GetComponent<Button>();
+                button.targetGraphic = image;
+                WeaponId weaponId = slot.Definition.Id;
+                button.onClick.RemoveAllListeners();
+                button.onClick.AddListener(() => OnWeaponSlotClicked(weaponId));
+
+                var labelGo = new GameObject("Label", typeof(RectTransform), typeof(Text));
+                labelGo.transform.SetParent(item.transform, false);
+                var labelRect = labelGo.GetComponent<RectTransform>();
+                labelRect.anchorMin = Vector2.zero;
+                labelRect.anchorMax = Vector2.one;
+                labelRect.offsetMin = new Vector2(12f, 6f);
+                labelRect.offsetMax = new Vector2(-10f, -6f);
+
+                var label = labelGo.GetComponent<Text>();
+                label.font = font;
+                label.fontSize = 20;
+                label.alignment = TextAnchor.MiddleLeft;
+                label.color = Color.white;
+                label.text = $"{slot.Definition.DisplayName}  Lv.{slot.Level}";
+
+                _weaponSlotButtons.Add(button);
+            }
+        }
+
+        private void OnWeaponSlotClicked(WeaponId weaponId)
+        {
+            if (_weaponLoadout == null)
+            {
+                return;
+            }
+
+            if (_weaponLoadout.TrySelectWeapon(weaponId))
+            {
+                _weaponDetailVisible = true;
+                ApplyWeaponDetailVisibility();
+            }
+        }
+
         private void EnsureRuntimeLayout()
         {
-            ConfigureTopLeft(_hpText, new Vector2(100f, -58f), new Vector2(340f, 36f));
-            ConfigureTopLeft(_levelText, new Vector2(100f, -92f), new Vector2(340f, 36f));
-            ConfigureTopLeft(_expText, new Vector2(100f, -124f), new Vector2(340f, 36f));
+            ConfigureTopLeft(_hpText, new Vector2(100f, -58f), new Vector2(280f, 36f));
+            ConfigureTopLeft(_expText, new Vector2(100f, -92f), new Vector2(280f, 36f));
+            ConfigureTopLeft(_levelText, new Vector2(392f, -92f), new Vector2(120f, 36f));
 
             ConfigureTopLeft(_scoreText, new Vector2(470f, -22f), new Vector2(400f, 36f));
             ConfigureTopLeft(_stageText, new Vector2(470f, -56f), new Vector2(400f, 36f));
@@ -480,6 +742,21 @@ namespace OneDayGame.Presentation.Ui
                 rect.pivot = new Vector2(0f, 1f);
                 rect.anchoredPosition = new Vector2(20f, -194f);
                 rect.sizeDelta = new Vector2(40f, 40f);
+            }
+
+            if (_hpText != null)
+            {
+                _hpText.alignment = TextAnchor.MiddleLeft;
+            }
+
+            if (_expText != null)
+            {
+                _expText.alignment = TextAnchor.MiddleLeft;
+            }
+
+            if (_levelText != null)
+            {
+                _levelText.alignment = TextAnchor.MiddleRight;
             }
 
             if (_expBarFill != null)

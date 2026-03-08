@@ -1,6 +1,10 @@
+using System.Collections.Generic;
+using System;
 using OneDayGame.Application;
+using OneDayGame.Domain.Gameplay;
 using OneDayGame.Domain.Input;
 using OneDayGame.Domain.Policies;
+using OneDayGame.Domain.Weapons;
 using UnityEngine;
 
 namespace OneDayGame.Presentation.Gameplay
@@ -30,12 +34,16 @@ namespace OneDayGame.Presentation.Gameplay
         private IInputPort _inputPort;
         private RunSessionService _runSession;
         private IWeaponPolicy _weaponPolicy;
+        private IWeaponLoadoutReadModel _weaponLoadout;
         private Transform _weaponVisual;
+        private InputAxis _cachedInputAxis;
         private SpriteRenderer _weaponRenderer;
         private CircleCollider2D _weaponHitCollider;
         private CircleCollider2D _bodyHitCollider;
         private readonly Collider2D[] _weaponHitBuffer = new Collider2D[24];
         private readonly Collider2D[] _bodyHitBuffer = new Collider2D[24];
+        private readonly List<Transform> _loadoutWeaponVisuals = new List<Transform>();
+        private Transform _weaponVisualsRoot;
 
         private float _attackCooldown;
         private Vector2 _playerBoundsMin;
@@ -47,6 +55,16 @@ namespace OneDayGame.Presentation.Gameplay
         private float _weaponPulseElapsed;
         private float _damageMultiplier = 1f;
         private float _attackSpeedMultiplier = 1f;
+        private float _expMagnetRemaining;
+        private float _expMagnetRadius;
+        private readonly WeaponOrchestrator _weaponOrchestrator = new WeaponOrchestrator();
+        private Transform _magnetAura;
+        private SpriteRenderer _magnetAuraRenderer;
+        private Func<Vector2, bool> _walkableResolver;
+
+        public bool IsExpMagnetActive => _expMagnetRemaining > 0f;
+
+        public float ExpMagnetRadius => Mathf.Max(0f, _expMagnetRadius);
 
         private void Awake()
         {
@@ -80,8 +98,29 @@ namespace OneDayGame.Presentation.Gameplay
             _weaponPulseElapsed = 0f;
             _damageMultiplier = 1f;
             _attackSpeedMultiplier = 1f;
+            _expMagnetRemaining = 0f;
+            _expMagnetRadius = 0f;
+            _weaponOrchestrator.Reset();
             EnsureWeaponVisual();
             EnsureBodyHitCollider();
+            EnsureMagnetAura();
+        }
+
+        public void BindWeaponLoadout(IWeaponLoadoutReadModel weaponLoadout)
+        {
+            _weaponLoadout = weaponLoadout;
+            _weaponOrchestrator.Reset();
+            EnsureLoadoutWeaponVisuals();
+        }
+
+        public void SetInputAxis(InputAxis axis)
+        {
+            _cachedInputAxis = axis;
+        }
+
+        public void BindWalkableResolver(Func<Vector2, bool> walkableResolver)
+        {
+            _walkableResolver = walkableResolver;
         }
 
         public void ApplyDamageMultiplier(float multiplier)
@@ -92,6 +131,14 @@ namespace OneDayGame.Presentation.Gameplay
         public void ApplyAttackSpeedMultiplier(float multiplier)
         {
             _attackSpeedMultiplier = Mathf.Clamp(_attackSpeedMultiplier * Mathf.Max(1f, multiplier), 1f, 10f);
+        }
+
+        public void ActivateExpMagnet(float duration, float radius)
+        {
+            _expMagnetRemaining = Mathf.Max(_expMagnetRemaining, Mathf.Max(0.1f, duration));
+            _expMagnetRadius = Mathf.Max(_expMagnetRadius, Mathf.Max(1.5f, radius));
+            EnsureMagnetAura();
+            UpdateMagnetAura();
         }
 
         public void SetAreaBounds(float minX, float maxX, float minY, float maxY)
@@ -125,12 +172,49 @@ namespace OneDayGame.Presentation.Gameplay
                 return;
             }
 
-            var move = _inputPort.MoveAxis;
+            var move = _cachedInputAxis;
+            if (move.IsZero && _inputPort != null)
+            {
+                move = _inputPort.MoveAxis;
+            }
             var target = new Vector2(move.X, move.Y);
+
+            if (_expMagnetRemaining > 0f)
+            {
+                _expMagnetRemaining = Mathf.Max(0f, _expMagnetRemaining - Time.deltaTime);
+            }
+
+            UpdateMagnetAura();
+
+            var current = _rigidbody2D != null ? _rigidbody2D.position : (Vector2) transform.position;
+            var proposed = current + target * (_moveSpeed * Time.deltaTime);
+            bool currentWalkable = IsWalkable(current);
+            if (currentWalkable && !IsWalkable(proposed))
+            {
+                var xOnly = new Vector2(proposed.x, current.y);
+                var yOnly = new Vector2(current.x, proposed.y);
+                if (IsWalkable(xOnly))
+                {
+                    proposed = xOnly;
+                }
+                else if (IsWalkable(yOnly))
+                {
+                    proposed = yOnly;
+                }
+                else
+                {
+                    proposed = current;
+                }
+            }
+            else if (!currentWalkable)
+            {
+                proposed = current + target * (_moveSpeed * Time.deltaTime);
+            }
 
             if (_rigidbody2D != null)
             {
-                _rigidbody2D.linearVelocity = target * _moveSpeed;
+                _rigidbody2D.linearVelocity = Vector2.zero;
+                _rigidbody2D.position = proposed;
             }
             else
             {
@@ -146,14 +230,30 @@ namespace OneDayGame.Presentation.Gameplay
                 }
             }
 
+            if (target.sqrMagnitude > 0.01f && _mainSpriteRenderer != null && _directionSprites != null && _directionSprites.Length == 8)
+            {
+                int dirIndex = GetDirectionIndex(target);
+                if (_directionSprites[dirIndex] != null)
+                {
+                    _mainSpriteRenderer.sprite = _directionSprites[dirIndex];
+                }
+            }
+
             ClampPosition();
             UpdateWeaponVisual(Time.deltaTime);
 
-            _attackCooldown -= Time.deltaTime;
-            if (_attackCooldown <= 0f)
+            if (_weaponLoadout != null && _weaponLoadout.Slots != null)
             {
-                ExecuteAttack();
-                _attackCooldown = _weaponPolicy.GetPlayerAttackCooldown(_runSession.Stage) / _attackSpeedMultiplier;
+                ExecuteLoadoutAttacks(Time.deltaTime);
+            }
+            else
+            {
+                _attackCooldown -= Time.deltaTime;
+                if (_attackCooldown <= 0f)
+                {
+                    ExecuteAttack();
+                    _attackCooldown = _weaponPolicy.GetPlayerAttackCooldown(_runSession.Stage) / _attackSpeedMultiplier;
+                }
             }
 
             if (_contactDamageElapsed > 0f)
@@ -192,6 +292,12 @@ namespace OneDayGame.Presentation.Gameplay
             {
                 _runSession.ApplyDamage(Mathf.Max(0.1f, nearestEnemy.ContactDamage));
                 nearestEnemy.ApplyKnockback(transform.position, BodyKnockbackForce);
+                if (nearestEnemy.Archetype == EnemyArchetype.SelfDestruct)
+                {
+                    _runSession.ApplyDamage(Mathf.Max(0.2f, nearestEnemy.ContactDamage * 0.65f));
+                    nearestEnemy.ApplyDamage(9999f);
+                }
+
                 _contactDamageElapsed = _touchDamageInterval;
             }
         }
@@ -261,6 +367,43 @@ namespace OneDayGame.Presentation.Gameplay
             }
 
             _weaponOrbitAngle += deltaTime * 220f;
+            bool useLoadout = _weaponLoadout != null && _weaponLoadout.Slots != null;
+
+            if (useLoadout)
+            {
+                if (_weaponVisual != null)
+                {
+                    _weaponVisual.gameObject.SetActive(false);
+                }
+
+                if (_weaponHitCollider != null)
+                {
+                    _weaponHitCollider.enabled = false;
+                }
+
+                EnsureLoadoutWeaponVisuals();
+                float orbitRadius = ResolveRotationOrbitRadius(_runSession.Stage);
+                float loadoutPulseScale = 1f;
+                if (_weaponPulseElapsed > 0f)
+                {
+                    _weaponPulseElapsed = Mathf.Max(0f, _weaponPulseElapsed - deltaTime);
+                    loadoutPulseScale = 1.28f;
+                }
+
+                UpdateLoadoutWeaponVisuals(orbitRadius, loadoutPulseScale);
+                return;
+            }
+
+            if (_weaponVisual != null)
+            {
+                _weaponVisual.gameObject.SetActive(true);
+            }
+
+            if (_weaponHitCollider != null)
+            {
+                _weaponHitCollider.enabled = true;
+            }
+
             float attackRange = _weaponPolicy.GetPlayerAttackRange(_runSession.Stage);
             float radius = Mathf.Clamp(attackRange * 0.98f, 0.72f, 2.5f);
             float angleRad = _weaponOrbitAngle * Mathf.Deg2Rad;
@@ -399,6 +542,470 @@ namespace OneDayGame.Presentation.Gameplay
             if (angle >= 292.5f && angle < 337.5f) return 1; // SouthEast
 
             return 0;
+        }
+
+        private void ExecuteLoadoutAttacks(float deltaTime)
+        {
+            var slots = _weaponLoadout.Slots;
+            if (slots == null)
+            {
+                return;
+            }
+
+            int stage = _runSession.Stage;
+            float synergyMultiplier = WeaponSynergyEngine.EvaluateDamageMultiplier(slots);
+            _weaponOrchestrator.Tick(
+                slots,
+                stage,
+                _attackSpeedMultiplier,
+                deltaTime,
+                (slot, stats) => ExecuteWeaponAttack(slot, stats, stage, synergyMultiplier));
+        }
+
+        private void ExecuteWeaponAttack(WeaponSlot slot, WeaponStats stats, int stage, float synergyMultiplier)
+        {
+            float damage = Mathf.Max(0.1f, stats.Damage * _damageMultiplier * Mathf.Max(0.2f, synergyMultiplier));
+            float range = Mathf.Max(0.2f, stats.Range);
+            int projectileCount = Mathf.Max(1, stats.ProjectileCount);
+            _weaponPulseElapsed = 0.09f;
+
+            int enemyMask = _enemyLayer.value == 0 ? Physics2D.AllLayers : _enemyLayer.value;
+            var hits = Physics2D.OverlapCircleAll(transform.position, range, enemyMask);
+            if (hits == null || hits.Length == 0)
+            {
+                return;
+            }
+
+            if (slot.Definition.Type == WeaponType.Rotation)
+            {
+                int bladeCount = Mathf.Max(1, projectileCount);
+                float orbitRadius = ResolveWeaponOrbitRadius(slot.Definition.Id, range);
+                float preciseRadius = Mathf.Clamp(range * 0.26f, 0.16f, 0.46f);
+                var hitSet = new HashSet<EnemyView>();
+                for (int blade = 0; blade < bladeCount; blade++)
+                {
+                    float angle = _weaponOrbitAngle + (360f / bladeCount) * blade;
+                    float rad = angle * Mathf.Deg2Rad;
+                    var center = transform.position + new Vector3(Mathf.Cos(rad), Mathf.Sin(rad), 0f) * orbitRadius;
+                    var preciseHits = Physics2D.OverlapCircleAll(center, preciseRadius, enemyMask);
+                    if (preciseHits == null || preciseHits.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    for (int i = 0; i < preciseHits.Length; i++)
+                    {
+                        var enemy = preciseHits[i] != null ? preciseHits[i].GetComponent<EnemyView>() : null;
+                        if (enemy == null || enemy.IsDead || hitSet.Contains(enemy))
+                        {
+                            continue;
+                        }
+
+                        hitSet.Add(enemy);
+                        enemy.ApplyDamage(damage);
+                        enemy.ApplyKnockback(center, WeaponKnockbackForce);
+                        ApplyWeaponStatusEffects(slot, enemy, stats);
+                    }
+                }
+
+                return;
+            }
+
+            if (slot.Definition.Type == WeaponType.Area)
+            {
+                EnemyView centerEnemy = null;
+                float nearestSqr = float.MaxValue;
+                for (int i = 0; i < hits.Length; i++)
+                {
+                    var enemy = hits[i] != null ? hits[i].GetComponent<EnemyView>() : null;
+                    if (enemy == null || enemy.IsDead)
+                    {
+                        continue;
+                    }
+
+                    float sqr = (enemy.transform.position - transform.position).sqrMagnitude;
+                    if (sqr < nearestSqr)
+                    {
+                        centerEnemy = enemy;
+                        nearestSqr = sqr;
+                    }
+
+                    enemy.ApplyDamage(damage);
+                    enemy.ApplyKnockback(transform.position, WeaponKnockbackForce);
+                    ApplyWeaponStatusEffects(slot, enemy, stats);
+                }
+
+                if (centerEnemy != null)
+                {
+                    WeaponAreaEffectPool.Spawn(
+                        centerEnemy.transform.position,
+                        Mathf.Clamp(range * 0.8f, 0.5f, 2.6f),
+                        new Color(0.45f, 0.95f, 0.55f, 0.6f));
+                }
+
+                return;
+            }
+
+            for (int shot = 0; shot < projectileCount; shot++)
+            {
+                EnemyView nearest = null;
+                float nearestSqr = float.MaxValue;
+                for (int i = 0; i < hits.Length; i++)
+                {
+                    var enemy = hits[i] != null ? hits[i].GetComponent<EnemyView>() : null;
+                    if (enemy == null || enemy.IsDead)
+                    {
+                        continue;
+                    }
+
+                    float sqr = (enemy.transform.position - transform.position).sqrMagnitude;
+                    if (sqr < nearestSqr)
+                    {
+                        nearest = enemy;
+                        nearestSqr = sqr;
+                    }
+                }
+
+                if (nearest == null)
+                {
+                    break;
+                }
+
+                SpawnProjectile(slot.Definition, nearest, damage, enemyMask);
+                ApplyWeaponStatusEffects(slot, nearest, stats);
+                hits = RemoveHitTarget(hits, nearest);
+            }
+        }
+
+        private static void ApplyWeaponStatusEffects(WeaponSlot slot, EnemyView enemy, WeaponStats stats)
+        {
+            if (slot == null || enemy == null)
+            {
+                return;
+            }
+
+            switch (slot.Definition.Id)
+            {
+                case WeaponId.LaserPet:
+                    enemy.ApplyPoison(Mathf.Max(1f, stats.Damage * 0.22f), 1.6f);
+                    break;
+                case WeaponId.RagePet:
+                    enemy.ApplySlow(0.55f, 0.74f);
+                    break;
+                case WeaponId.StunPet:
+                    enemy.ApplyStun(0.35f);
+                    break;
+                case WeaponId.PoisonCloud:
+                    enemy.ApplyPoison(Mathf.Max(1f, stats.DotPerSecond), 2.1f);
+                    break;
+                case WeaponId.BlackHole:
+                    enemy.ApplySlow(0.85f, 0.58f);
+                    break;
+            }
+        }
+
+        private void SpawnProjectile(WeaponDefinition definition, EnemyView target, float damage, int enemyMask)
+        {
+            if (target == null)
+            {
+                return;
+            }
+            float speed = definition.Type == WeaponType.Projectile ? 11f : 9f;
+            float hitRadius = definition.Id == WeaponId.Boomerang ? 0.3f : 0.22f;
+            Color tint = definition.Id == WeaponId.Boomerang
+                ? new Color(1f, 0.64f, 0.24f, 1f)
+                : new Color(1f, 0.94f, 0.3f, 1f);
+            WeaponProjectilePool.Spawn(
+                transform.position,
+                target,
+                damage,
+                speed,
+                2.2f,
+                hitRadius,
+                WeaponKnockbackForce,
+                enemyMask,
+                tint);
+        }
+
+        private static Collider2D[] RemoveHitTarget(Collider2D[] hits, EnemyView target)
+        {
+            if (hits == null || target == null)
+            {
+                return hits;
+            }
+
+            for (int i = 0; i < hits.Length; i++)
+            {
+                var enemy = hits[i] != null ? hits[i].GetComponent<EnemyView>() : null;
+                if (enemy == target)
+                {
+                    hits[i] = null;
+                }
+            }
+
+            return hits;
+        }
+
+        private void EnsureLoadoutWeaponVisuals()
+        {
+            int activeCount = GetActiveRotationWeaponCount();
+            if (activeCount <= 0)
+            {
+                for (int i = 0; i < _loadoutWeaponVisuals.Count; i++)
+                {
+                    if (_loadoutWeaponVisuals[i] != null)
+                    {
+                        _loadoutWeaponVisuals[i].gameObject.SetActive(false);
+                    }
+                }
+
+                return;
+            }
+
+            if (_weaponVisualsRoot == null)
+            {
+                var existing = transform.Find("WeaponVisualsRoot");
+                if (existing == null)
+                {
+                    var rootGo = new GameObject("WeaponVisualsRoot");
+                    rootGo.transform.SetParent(transform, false);
+                    _weaponVisualsRoot = rootGo.transform;
+                }
+                else
+                {
+                    _weaponVisualsRoot = existing;
+                }
+            }
+
+            while (_loadoutWeaponVisuals.Count < activeCount)
+            {
+                var go = new GameObject($"LoadoutWeaponVisual_{_loadoutWeaponVisuals.Count}");
+                go.transform.SetParent(_weaponVisualsRoot, false);
+                var renderer = go.AddComponent<SpriteRenderer>();
+                renderer.sprite = RuntimeSpriteLibrary.GetDiamond();
+                renderer.sortingOrder = 129;
+                renderer.color = new Color(0.98f, 0.86f, 0.22f, 0.95f);
+                _loadoutWeaponVisuals.Add(go.transform);
+            }
+
+            for (int i = 0; i < _loadoutWeaponVisuals.Count; i++)
+            {
+                if (_loadoutWeaponVisuals[i] != null)
+                {
+                    _loadoutWeaponVisuals[i].gameObject.SetActive(i < activeCount);
+                }
+            }
+        }
+
+        private void UpdateLoadoutWeaponVisuals(float orbitRadius, float pulseScale)
+        {
+            int activeCount = GetActiveRotationWeaponCount();
+            if (activeCount <= 0)
+            {
+                return;
+            }
+
+            float safeRadius = Mathf.Clamp(orbitRadius * 0.9f, 0.58f, 2f);
+            int visualIndex = 0;
+            if (_weaponLoadout != null && _weaponLoadout.Slots != null)
+            {
+                for (int i = 0; i < _weaponLoadout.Slots.Count; i++)
+                {
+                    var slot = _weaponLoadout.Slots[i];
+                    if (slot == null || slot.IsLocked || slot.IsEmpty || slot.Definition.Type != WeaponType.Rotation)
+                    {
+                        continue;
+                    }
+
+                    if (visualIndex >= _loadoutWeaponVisuals.Count)
+                    {
+                        break;
+                    }
+
+                    var visual = _loadoutWeaponVisuals[visualIndex];
+                    if (visual == null)
+                    {
+                        visualIndex++;
+                        continue;
+                    }
+
+                    float angle = _weaponOrbitAngle + (360f / activeCount) * visualIndex;
+                    float rad = angle * Mathf.Deg2Rad;
+                    visual.localPosition = new Vector3(Mathf.Cos(rad), Mathf.Sin(rad), 0f) * safeRadius;
+                    visual.localRotation = Quaternion.Euler(0f, 0f, -angle * 1.2f);
+                    visual.localScale = new Vector3(WeaponVisualScale * pulseScale * 0.82f, WeaponVisualScale * pulseScale * 0.82f, 1f);
+
+                    var renderer = visual.GetComponent<SpriteRenderer>();
+                    if (renderer != null)
+                    {
+                        renderer.color = GetWeaponTint(slot.Definition.Type);
+                    }
+
+                    visualIndex++;
+                }
+            }
+        }
+
+        private Vector3 ResolveWeaponVisualPosition(WeaponId weaponId)
+        {
+            if (_weaponLoadout == null || _weaponLoadout.Slots == null)
+            {
+                return transform.position;
+            }
+
+            int visualIndex = 0;
+            for (int i = 0; i < _weaponLoadout.Slots.Count; i++)
+            {
+                var slot = _weaponLoadout.Slots[i];
+                if (slot == null || slot.IsLocked || slot.IsEmpty || slot.Definition.Type != WeaponType.Rotation)
+                {
+                    continue;
+                }
+
+                if (slot.Definition.Id == weaponId)
+                {
+                    if (visualIndex < _loadoutWeaponVisuals.Count && _loadoutWeaponVisuals[visualIndex] != null)
+                    {
+                        return _loadoutWeaponVisuals[visualIndex].position;
+                    }
+
+                    return transform.position;
+                }
+
+                visualIndex++;
+            }
+
+            return transform.position;
+        }
+
+        private float ResolveWeaponOrbitRadius(WeaponId weaponId, float fallbackRange)
+        {
+            Vector3 pos = ResolveWeaponVisualPosition(weaponId);
+            float distance = Vector3.Distance(transform.position, pos);
+            if (distance > 0.05f)
+            {
+                return distance;
+            }
+
+            return Mathf.Clamp(fallbackRange * 0.85f, 0.55f, 2f);
+        }
+
+        private float ResolveRotationOrbitRadius(int stage)
+        {
+            if (_weaponLoadout == null || _weaponLoadout.Slots == null)
+            {
+                return Mathf.Clamp(_weaponPolicy.GetPlayerAttackRange(stage) * 0.95f, 0.62f, 2f);
+            }
+
+            for (int i = 0; i < _weaponLoadout.Slots.Count; i++)
+            {
+                var slot = _weaponLoadout.Slots[i];
+                if (slot == null || slot.IsLocked || slot.IsEmpty || slot.Definition.Type != WeaponType.Rotation)
+                {
+                    continue;
+                }
+
+                var stats = slot.Definition.Evaluate(stage, slot.Level);
+                return Mathf.Clamp(stats.Range * 0.85f, 0.62f, 2f);
+            }
+
+            return Mathf.Clamp(_weaponPolicy.GetPlayerAttackRange(stage) * 0.95f, 0.62f, 2f);
+        }
+
+        private int GetActiveRotationWeaponCount()
+        {
+            if (_weaponLoadout == null || _weaponLoadout.Slots == null)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            for (int i = 0; i < _weaponLoadout.Slots.Count; i++)
+            {
+                var slot = _weaponLoadout.Slots[i];
+                if (slot != null && !slot.IsLocked && !slot.IsEmpty && slot.Definition.Type == WeaponType.Rotation)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static Color GetWeaponTint(WeaponType type)
+        {
+            switch (type)
+            {
+                case WeaponType.Projectile:
+                    return new Color(1f, 0.78f, 0.2f, 0.95f);
+                case WeaponType.Area:
+                    return new Color(0.44f, 0.95f, 0.46f, 0.95f);
+                case WeaponType.Persistent:
+                    return new Color(0.68f, 0.8f, 1f, 0.95f);
+                default:
+                    return new Color(1f, 0.9f, 0.25f, 0.95f);
+            }
+        }
+
+        private bool IsWalkable(Vector2 worldPosition)
+        {
+            if (_walkableResolver == null)
+            {
+                return true;
+            }
+
+            return _walkableResolver(worldPosition);
+        }
+
+        private void EnsureMagnetAura()
+        {
+            if (_magnetAura == null)
+            {
+                var existing = transform.Find("MagnetAura");
+                if (existing == null)
+                {
+                    var aura = new GameObject("MagnetAura");
+                    aura.transform.SetParent(transform, false);
+                    _magnetAura = aura.transform;
+                }
+                else
+                {
+                    _magnetAura = existing;
+                }
+            }
+
+            if (_magnetAura != null && _magnetAuraRenderer == null)
+            {
+                _magnetAuraRenderer = _magnetAura.GetComponent<SpriteRenderer>();
+                if (_magnetAuraRenderer == null)
+                {
+                    _magnetAuraRenderer = _magnetAura.gameObject.AddComponent<SpriteRenderer>();
+                }
+
+                _magnetAuraRenderer.sprite = RuntimeSpriteLibrary.GetCircle();
+                _magnetAuraRenderer.sortingOrder = 80;
+                _magnetAuraRenderer.color = new Color(0.65f, 0.86f, 1f, 0f);
+            }
+        }
+
+        private void UpdateMagnetAura()
+        {
+            if (_magnetAura == null || _magnetAuraRenderer == null)
+            {
+                return;
+            }
+
+            bool active = IsExpMagnetActive;
+            _magnetAura.gameObject.SetActive(active);
+            if (!active)
+            {
+                return;
+            }
+
+            float normalizedRadius = Mathf.Clamp(_expMagnetRadius * 0.22f, 0.45f, 1.8f);
+            _magnetAura.localScale = new Vector3(normalizedRadius, normalizedRadius, 1f);
+            float pulse = 0.35f + Mathf.Sin(Time.time * 7.5f) * 0.2f;
+            _magnetAuraRenderer.color = new Color(0.55f, 0.84f, 1f, pulse);
         }
     }
 }

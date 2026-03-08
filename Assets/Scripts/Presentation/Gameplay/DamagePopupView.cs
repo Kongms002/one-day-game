@@ -4,6 +4,8 @@ namespace OneDayGame.Presentation.Gameplay
 {
     public sealed class DamagePopupView : MonoBehaviour
     {
+        public event System.Action<DamagePopupView> Completed;
+
         [SerializeField]
         private float _lifeTime = 0.55f;
 
@@ -13,6 +15,7 @@ namespace OneDayGame.Presentation.Gameplay
         private TextMesh _textMesh;
         private float _elapsed;
         private Color _originColor;
+        private bool _destroyOnComplete = true;
 
         public void Initialize(string text, Color color)
         {
@@ -30,6 +33,12 @@ namespace OneDayGame.Presentation.Gameplay
             _textMesh.color = color;
             _originColor = color;
             _elapsed = 0f;
+            gameObject.SetActive(true);
+        }
+
+        public void SetDestroyOnComplete(bool destroyOnComplete)
+        {
+            _destroyOnComplete = destroyOnComplete;
         }
 
         private void Update()
@@ -47,7 +56,15 @@ namespace OneDayGame.Presentation.Gameplay
 
             if (_elapsed >= _lifeTime)
             {
-                Destroy(gameObject);
+                Completed?.Invoke(this);
+                if (_destroyOnComplete)
+                {
+                    Destroy(gameObject);
+                }
+                else
+                {
+                    gameObject.SetActive(false);
+                }
             }
         }
     }
